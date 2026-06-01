@@ -9,6 +9,14 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { Headphones } from 'lucide-react'
 
+const getPasswordChecks = (value: string) => ({
+  minLength: value.length >= 8,
+  hasLowercase: /[a-z]/.test(value),
+  hasUppercase: /[A-Z]/.test(value),
+  hasNumber: /\d/.test(value),
+  hasSpecialChar: /[^A-Za-z0-9]/.test(value),
+})
+
 export default function SignUpPage() {
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -19,6 +27,21 @@ export default function SignUpPage() {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
+
+  const passwordChecks = getPasswordChecks(password)
+  const passedChecks = Object.values(passwordChecks).filter(Boolean).length
+  const isStrongPassword = Object.values(passwordChecks).every(Boolean)
+  const passwordsMatch = repeatPassword.length === 0 || password === repeatPassword
+
+  const strengthLabel =
+    passedChecks <= 2 ? 'Weak' : passedChecks <= 4 ? 'Medium' : 'Strong'
+
+  const strengthColor =
+    passedChecks <= 2
+      ? 'bg-red-500'
+      : passedChecks <= 4
+        ? 'bg-yellow-400'
+        : 'bg-green-500'
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -45,8 +68,10 @@ export default function SignUpPage() {
       return
     }
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters')
+    if (!isStrongPassword) {
+      setError(
+        'Use a stronger password with at least 8 characters, uppercase, lowercase, number, and symbol',
+      )
       setIsLoading(false)
       return
     }
@@ -81,7 +106,7 @@ export default function SignUpPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen bg-linear-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
       {/* Background decorative elements */}
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-yellow-400 rounded-full mix-blend-screen filter blur-3xl opacity-20 animate-pulse"></div>
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500 rounded-full mix-blend-screen filter blur-3xl opacity-20 animate-pulse"></div>
@@ -186,6 +211,38 @@ export default function SignUpPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 className="mt-2 bg-slate-700 border-gray-600 text-white placeholder:text-gray-500 focus:border-yellow-400"
               />
+              {password.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  <div className="grid grid-cols-5 gap-1">
+                    {[0, 1, 2, 3, 4].map((index) => (
+                      <span
+                        key={index}
+                        className={`h-1.5 rounded-full ${index < passedChecks ? strengthColor : 'bg-slate-600'}`}
+                      />
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-300">
+                    Password strength: <span className="font-semibold">{strengthLabel}</span>
+                  </p>
+                  <ul className="space-y-1 text-xs text-gray-400">
+                    <li className={passwordChecks.minLength ? 'text-green-400' : 'text-gray-400'}>
+                      At least 8 characters
+                    </li>
+                    <li className={passwordChecks.hasLowercase ? 'text-green-400' : 'text-gray-400'}>
+                      At least one lowercase letter
+                    </li>
+                    <li className={passwordChecks.hasUppercase ? 'text-green-400' : 'text-gray-400'}>
+                      At least one uppercase letter
+                    </li>
+                    <li className={passwordChecks.hasNumber ? 'text-green-400' : 'text-gray-400'}>
+                      At least one number
+                    </li>
+                    <li className={passwordChecks.hasSpecialChar ? 'text-green-400' : 'text-gray-400'}>
+                      At least one symbol
+                    </li>
+                  </ul>
+                </div>
+              )}
             </div>
 
             <div>
@@ -201,6 +258,9 @@ export default function SignUpPage() {
                 onChange={(e) => setRepeatPassword(e.target.value)}
                 className="mt-2 bg-slate-700 border-gray-600 text-white placeholder:text-gray-500 focus:border-yellow-400"
               />
+              {repeatPassword.length > 0 && !passwordsMatch && (
+                <p className="mt-2 text-xs text-red-400">Passwords do not match</p>
+              )}
             </div>
 
             {error && (
@@ -211,8 +271,8 @@ export default function SignUpPage() {
 
             <Button
               type="submit"
-              disabled={isLoading}
-              className="w-full mt-6 bg-gradient-to-r from-yellow-400 to-yellow-500 text-slate-900 font-bold py-2 rounded-lg hover:from-yellow-300 hover:to-yellow-400 transition-all"
+              disabled={isLoading || !isStrongPassword || !passwordsMatch}
+              className="w-full mt-6 bg-linear-to-r from-yellow-400 to-yellow-500 text-slate-900 font-bold py-2 rounded-lg hover:from-yellow-300 hover:to-yellow-400 transition-all"
             >
               {isLoading ? 'Creating account...' : 'Sign Up'}
             </Button>
