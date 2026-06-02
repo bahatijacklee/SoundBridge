@@ -160,51 +160,7 @@ export default function AccountPage() {
     navigator.clipboard.writeText(text)
   }
 
-  const handleDeposit = async (amount: number, description: string) => {
-    try {
-      const { data: { user: authUser } } = await supabase.auth.getUser()
-
-      if (!authUser) throw new Error('Not authenticated')
-
-      // Create transaction record
-      const { error } = await supabase.from('transactions').insert([
-        {
-          user_id: authUser.id,
-          transaction_type: 'deposit',
-          amount: amount,
-          description: description || 'Deposit (Recharge)',
-          status: 'completed',
-        },
-      ])
-
-      if (error) throw error
-
-      // Update user earnings (mock for now)
-      const newEarnings =
-        (userData?.total_earnings || 0) + amount
-
-      await supabase
-        .from('users')
-        .update({ total_earnings: newEarnings })
-        .eq('id', authUser.id)
-
-      // Refresh data
-      setUserData({ ...userData!, total_earnings: newEarnings })
-
-      // Fetch latest transactions
-      const { data: txns } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('user_id', authUser.id)
-        .order('created_at', { ascending: false })
-        .limit(10)
-
-      if (txns) setTransactions(txns)
-    } catch (error) {
-      console.error('[v0] Deposit error:', error)
-      throw error
-    }
-  }
+  // Deposits are now handled via QR codes in the modal - no action needed
 
   const handleWithdraw = async (amount: number, description: string) => {
     try {
@@ -507,7 +463,6 @@ export default function AccountPage() {
         isOpen={showDepositModal}
         onClose={() => setShowDepositModal(false)}
         type="deposit"
-        onSubmit={handleDeposit}
       />
 
       <TransactionModal
