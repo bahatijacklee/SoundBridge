@@ -161,8 +161,7 @@ export default function AccountPage() {
   }
 
   // Deposits are now handled via QR codes in the modal - no action needed
-
-  const handleWithdraw = async (amount: number, description: string) => {
+  const handleWithdraw = async (amount: number, walletType: string) => {
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser()
 
@@ -173,32 +172,24 @@ export default function AccountPage() {
         throw new Error('Insufficient balance')
       }
 
-      // Create transaction record
-      const { error } = await supabase.from('transactions').insert([
+      // Get selected wallet
+      const wallet = wallets.find(w => w.wallet_type === walletType)
+      if (!wallet) throw new Error('Wallet not found')
+
+      // Create withdrawal request
+      const { error } = await supabase.from('withdrawal_requests').insert([
         {
           user_id: authUser.id,
-          transaction_type: 'withdrawal',
-          amount: -amount,
-          description: description || 'Withdrawal',
-          status: 'completed',
+          amount,
+          wallet_type: walletType,
+          wallet_address: wallet.wallet_address,
+          status: 'pending',
         },
       ])
 
       if (error) throw error
 
-      // Update user earnings
-      const newEarnings =
-        (userData?.total_earnings || 0) - amount
-
-      await supabase
-        .from('users')
-        .update({ total_earnings: newEarnings })
-        .eq('id', authUser.id)
-
-      // Refresh data
-      setUserData({ ...userData!, total_earnings: newEarnings })
-
-      // Fetch latest transactions
+      // Refresh transactions
       const { data: txns } = await supabase
         .from('transactions')
         .select('*')
@@ -208,7 +199,7 @@ export default function AccountPage() {
 
       if (txns) setTransactions(txns)
     } catch (error) {
-      console.error('[v0] Withdrawal error:', error)
+      console.error('[v0] Withdrawal request error:', error)
       throw error
     }
   }
@@ -470,6 +461,7 @@ export default function AccountPage() {
         onClose={() => setShowWithdrawModal(false)}
         type="withdraw"
         onSubmit={handleWithdraw}
+        wallets={wallets}
       />
     </div>
   )

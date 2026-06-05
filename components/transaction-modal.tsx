@@ -7,7 +7,8 @@ interface TransactionModalProps {
   isOpen: boolean
   onClose: () => void
   type: 'deposit' | 'withdraw'
-  onSubmit?: (amount: number, description: string) => Promise<void>
+  onSubmit?: (amount: number, walletType: string) => Promise<void>
+  wallets?: Array<{ wallet_type: string; wallet_address: string }>
 }
 
 export function TransactionModal({
@@ -15,9 +16,10 @@ export function TransactionModal({
   onClose,
   type,
   onSubmit,
+  wallets = [],
 }: TransactionModalProps) {
   const [amount, setAmount] = useState('')
-  const [description, setDescription] = useState('')
+  const [selectedWalletType, setSelectedWalletType] = useState<'btc' | 'usdt' | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
@@ -45,14 +47,19 @@ export function TransactionModal({
       return
     }
 
+    if (!isDeposit && !selectedWalletType) {
+      setError('Please select a wallet')
+      return
+    }
+
     setLoading(true)
     try {
       if (onSubmit) {
-        await onSubmit(Number(amount), description)
+        await onSubmit(Number(amount), selectedWalletType || '')
       }
       setSuccess(true)
       setAmount('')
-      setDescription('')
+      setSelectedWalletType(null)
 
       setTimeout(() => {
         onClose()
@@ -201,26 +208,47 @@ export function TransactionModal({
 
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Reference / Description (Optional)
+                  Select Wallet
                 </label>
-                <input
-                  type="text"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="e.g., Weekly earnings"
-                  className="w-full px-4 py-2.5 bg-slate-700 border border-gray-600 rounded-lg text-white placeholder:text-gray-500 focus:border-yellow-400 focus:outline-none transition-all"
-                />
+                {wallets.length > 0 ? (
+                  <div className="space-y-2">
+                    {wallets.map(wallet => (
+                      <button
+                        key={wallet.wallet_type}
+                        type="button"
+                        onClick={() => setSelectedWalletType(wallet.wallet_type as 'btc' | 'usdt')}
+                        className={`w-full p-3 border rounded-lg text-left transition-all ${
+                          selectedWalletType === wallet.wallet_type
+                            ? 'border-yellow-400 bg-yellow-400 bg-opacity-10'
+                            : 'border-gray-600 bg-slate-700 hover:border-gray-500'
+                        }`}
+                      >
+                        <div className="font-semibold text-white capitalize">
+                          {wallet.wallet_type === 'btc' ? 'Bitcoin (BTC)' : 'USDT (TRC20)'}
+                        </div>
+                        <div className="text-gray-400 text-xs break-all">
+                          {wallet.wallet_address}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-4 bg-slate-700 border border-gray-600 rounded-lg text-center">
+                    <p className="text-gray-400">No linked wallets</p>
+                    <p className="text-gray-500 text-xs mt-1">Link a wallet first on your account page</p>
+                  </div>
+                )}
               </div>
 
               <div className="p-4 bg-blue-500 bg-opacity-5 border border-blue-500 border-opacity-20 rounded-lg">
                 <p className="text-xs text-blue-300 leading-relaxed">
-                  🔒 Withdrawal will be sent to your linked wallet account
+                  � Your withdrawal request will be reviewed and processed by admin
                 </p>
               </div>
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || !selectedWalletType}
                 className={`w-full py-3 rounded-lg font-bold uppercase tracking-wider transition-all ${buttonColor} disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 {loading ? (
@@ -229,7 +257,7 @@ export function TransactionModal({
                     Processing...
                   </span>
                 ) : (
-                  `Withdraw $${amount || '0.00'}`
+                  `Request Withdrawal $${amount || '0.00'}`
                 )}
               </button>
             </form>

@@ -1,0 +1,31 @@
+# A link to the database on the Supabase dashboard
+# project_id = ""
+
+# The port to use for the API when developing locally
+# api_port = 54321
+
+# The port to use for the database when developing locally
+# db_port = 54322
+
+# The port to use for the Studio when developing locally
+# studio_port = 54323
+
+# The port to use for the Inbucket when developing locally
+# inbucket_port = 54324
+
+# The port to use for the edge functions when developing locally
+# functions_port = 54321
+
+# The JWT secret to use for verifying Supabase JWT tokens
+# jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"
+
+[db]
+# The database schema to use for the database migrations
+# schema = "public"
+
+# The maximum number of database connections to use
+# pool_size = 10
+
+[functions]
+  [functions.deposit-watcher]
+  verify_jwt = false # Change to true if you want to verify JWT for this function

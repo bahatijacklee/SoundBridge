@@ -16,6 +16,11 @@ export default function LandingPage() {
           <span className="text-lg md:text-2xl font-bold text-white">SoundBridge</span>
         </div>
         <div className="flex gap-2 md:gap-4">
+          <Link href="/admin">
+            <Button variant="ghost" className="text-gray-300 hover:text-white text-xs md:text-base">
+              Staff Login
+            </Button>
+          </Link>
           <Link href="/auth/login">
             <Button variant="ghost" className="text-gray-300 hover:text-white text-xs md:text-base">
               Log In
