@@ -53,6 +53,11 @@ export default function AccountPage() {
   const [loading, setLoading] = useState(true)
   const [showDepositModal, setShowDepositModal] = useState(false)
   const [showWithdrawModal, setShowWithdrawModal] = useState(false)
+  const [showWalletModal, setShowWalletModal] = useState(false)
+  const [walletModalType, setWalletModalType] = useState<'usdt' | 'btc' | null>(null)
+  const [walletAddressInput, setWalletAddressInput] = useState('')
+  const [walletSaving, setWalletSaving] = useState(false)
+  const [walletError, setWalletError] = useState('')
   const supabase = createClient()
 
   useEffect(() => {
@@ -115,44 +120,110 @@ export default function AccountPage() {
     fetchData()
   }, [supabase])
 
-  const handleLinkWallet = async (walletType: string) => {
+  const refreshWallets = async (userId: string) => {
+    const { data: userWallets } = await supabase
+      .from('wallets')
+      .select('*')
+      .eq('user_id', userId)
+
+    if (userWallets) {
+      setWallets(userWallets)
+    }
+  }
+
+  const validateWalletAddress = (walletType: 'usdt' | 'btc', address: string) => {
+    const trimmed = address.trim()
+    if (!trimmed) return 'Wallet address is required'
+
+    if (walletType === 'usdt') {
+      if (!trimmed.startsWith('T') || trimmed.length < 30) {
+        return 'USDT (TRC20) address should look like a Tron address starting with T'
+      }
+    }
+
+    if (walletType === 'btc') {
+      const lower = trimmed.toLowerCase()
+      const looksLikeBtc = lower.startsWith('bc1') || trimmed.startsWith('1') || trimmed.startsWith('3')
+      if (!looksLikeBtc || trimmed.length < 26) {
+        return 'Bitcoin address should start with 1, 3, or bc1'
+      }
+    }
+
+    return null
+  }
+
+  const openWalletEditor = (walletType: 'usdt' | 'btc') => {
+    const existingWallet = wallets.find((w) => w.wallet_type === walletType)
+    setWalletModalType(walletType)
+    setWalletAddressInput(existingWallet?.wallet_address || '')
+    setWalletError('')
+    setShowWalletModal(true)
+  }
+
+  const handleSaveWallet = async () => {
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser()
 
       if (!authUser) return
 
-      // Check if wallet already exists
-      const existingWallet = wallets.find((w) => w.wallet_type === walletType)
+      if (!walletModalType) return
+
+      const validationError = validateWalletAddress(walletModalType, walletAddressInput)
+      if (validationError) {
+        setWalletError(validationError)
+        return
+      }
+
+      setWalletSaving(true)
+      setWalletError('')
+
+      const existingWallet = wallets.find((w) => w.wallet_type === walletModalType)
 
       if (existingWallet) {
-        // Unlink
-        await supabase.from('wallets').delete().eq('id', existingWallet.id)
-      } else {
-        // Link new wallet (mock)
-        const mockAddress =
-          walletType === 'usdt'
-            ? '0x' + Math.random().toString(16).slice(2)
-            : '1' + Math.random().toString(10).slice(2, 34)
+        const { error } = await supabase
+          .from('wallets')
+          .update({
+            wallet_address: walletAddressInput.trim(),
+            is_linked: true,
+          })
+          .eq('id', existingWallet.id)
 
-        await supabase.from('wallets').insert({
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('wallets').insert({
           user_id: authUser.id,
-          wallet_type: walletType,
-          wallet_address: mockAddress,
+          wallet_type: walletModalType,
+          wallet_address: walletAddressInput.trim(),
           is_linked: true,
         })
+
+        if (error) throw error
       }
 
-      // Refresh wallets
-      const { data: updatedWallets } = await supabase
-        .from('wallets')
-        .select('*')
-        .eq('user_id', authUser.id)
-
-      if (updatedWallets) {
-        setWallets(updatedWallets)
-      }
+      await refreshWallets(authUser.id)
+      setShowWalletModal(false)
+      setWalletModalType(null)
+      setWalletAddressInput('')
     } catch (error) {
-      console.error('[v0] Error linking wallet:', error)
+      console.error('[v0] Error saving wallet:', error)
+      setWalletError('Failed to save wallet. Please try again.')
+    } finally {
+      setWalletSaving(false)
+    }
+  }
+
+  const handleUnlinkWallet = async (walletType: string) => {
+    try {
+      const { data: { user: authUser } } = await supabase.auth.getUser()
+      if (!authUser) return
+
+      const existingWallet = wallets.find((w) => w.wallet_type === walletType)
+      if (!existingWallet) return
+
+      await supabase.from('wallets').delete().eq('id', existingWallet.id)
+      await refreshWallets(authUser.id)
+    } catch (error) {
+      console.error('[v0] Error unlinking wallet:', error)
     }
   }
 
@@ -358,7 +429,14 @@ export default function AccountPage() {
                         </span>
                       </div>
                       <Button
-                        onClick={() => handleLinkWallet(walletType)}
+                        onClick={() => openWalletEditor(walletType as 'usdt' | 'btc')}
+                        variant="outline"
+                        className="border-gray-600 text-gray-200 hover:bg-slate-700"
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        onClick={() => handleUnlinkWallet(walletType)}
                         variant="outline"
                         className="border-red-500 border-opacity-30 text-red-400 hover:bg-red-500 hover:bg-opacity-10"
                       >
@@ -367,11 +445,11 @@ export default function AccountPage() {
                     </div>
                   ) : (
                     <Button
-                      onClick={() => handleLinkWallet(walletType)}
+                      onClick={() => openWalletEditor(walletType as 'usdt' | 'btc')}
                       className="bg-blue-600 hover:bg-blue-700 text-white font-semibold"
                     >
                       <LinkIcon className="w-4 h-4 mr-2" />
-                      Link Wallet
+                      Add Wallet
                     </Button>
                   )}
                 </div>
@@ -461,8 +539,70 @@ export default function AccountPage() {
         onClose={() => setShowWithdrawModal(false)}
         type="withdraw"
         onSubmit={handleWithdraw}
-        wallets={wallets}
+        wallets={wallets.filter((w) => w.is_linked && !!w.wallet_address)}
       />
+
+      {showWalletModal && walletModalType && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black bg-opacity-60 backdrop-blur-sm"
+            onClick={() => {
+              if (walletSaving) return
+              setShowWalletModal(false)
+              setWalletModalType(null)
+              setWalletError('')
+            }}
+          />
+          <div className="relative bg-gradient-to-br from-slate-800 to-slate-700 border-2 border-yellow-400 border-opacity-30 rounded-2xl p-6 w-full max-w-lg shadow-2xl shadow-yellow-400/10">
+            <h2 className="text-2xl font-bold text-white mb-2">
+              {walletModalType === 'usdt' ? 'Add USDT (TRC20) Wallet' : 'Add Bitcoin (BTC) Wallet'}
+            </h2>
+            <p className="text-sm text-gray-400 mb-6">
+              Paste your Binance destination wallet address for withdrawals.
+            </p>
+
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Wallet Address
+            </label>
+            <input
+              value={walletAddressInput}
+              onChange={(e) => setWalletAddressInput(e.target.value)}
+              placeholder={walletModalType === 'usdt' ? 'T...' : 'bc1... / 1... / 3...'}
+              className="w-full px-4 py-2.5 bg-slate-700 border border-gray-600 rounded-lg text-white placeholder:text-gray-500 focus:border-yellow-400 focus:outline-none transition-all"
+            />
+
+            {walletError && (
+              <div className="mt-3 p-3 bg-red-500 bg-opacity-10 border border-red-500 border-opacity-50 rounded-lg">
+                <p className="text-red-400 text-sm font-semibold">✗ {walletError}</p>
+              </div>
+            )}
+
+            <div className="mt-6 flex gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 border-gray-600 text-gray-200 hover:bg-slate-700"
+                disabled={walletSaving}
+                onClick={() => {
+                  setShowWalletModal(false)
+                  setWalletModalType(null)
+                  setWalletError('')
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="flex-1 bg-yellow-400 hover:bg-yellow-300 text-slate-900 font-semibold"
+                disabled={walletSaving}
+                onClick={handleSaveWallet}
+              >
+                {walletSaving ? 'Saving...' : 'Save Wallet'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

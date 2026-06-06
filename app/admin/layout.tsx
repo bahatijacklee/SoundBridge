@@ -31,10 +31,16 @@ export default function AdminLayout({
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
+  const isLoginRoute = pathname === '/admin/login'
 
   useEffect(() => {
     const checkAuth = async () => {
       try {
+        if (isLoginRoute) {
+          setIsLoading(false)
+          return
+        }
+
         console.log('🔹 [Admin Layout] Checking auth...')
         const { data: { user: authUser } } = await supabase.auth.getUser()
 
@@ -72,7 +78,7 @@ export default function AdminLayout({
     }
 
     checkAuth()
-  }, [supabase])
+  }, [supabase, isLoginRoute])
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -89,6 +95,10 @@ export default function AdminLayout({
     { name: 'Tasks', icon: ListTodo, href: '/admin/tasks' },
     { name: 'Settings', icon: Settings, href: '/admin/settings' },
   ]
+
+  if (isLoginRoute) {
+    return children
+  }
 
   if (isLoading) {
     return (
@@ -171,7 +181,7 @@ export default function AdminLayout({
           {navItems.map((item) => {
             const isActive =
               pathname === item.href ||
-              (item.href !== '/admin/dashboard' && pathname.startsWith(item.href))
+              (item.href !== '/admin' && pathname.startsWith(item.href))
 
             return (
               <Link

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Wallet, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
+import { Wallet, CheckCircle2, XCircle, Loader2, Copy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface WithdrawalRequest {
@@ -24,6 +24,7 @@ export default function AdminWithdrawals() {
   const [isLoading, setIsLoading] = useState(true)
   const [processingId, setProcessingId] = useState<string | null>(null)
   const supabase = createClient()
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchWithdrawals = async () => {
@@ -126,6 +127,12 @@ export default function AdminWithdrawals() {
     }
   }
 
+  const copyToClipboard = (requestId: string, text: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedId(requestId)
+    setTimeout(() => setCopiedId(null), 1500)
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -187,9 +194,19 @@ export default function AdminWithdrawals() {
                   <p className="font-medium text-slate-900 mb-1">
                     {request.wallet_type.toUpperCase()}
                   </p>
-                  <p className="text-sm text-slate-600 font-mono break-all">
-                    {request.wallet_address}
-                  </p>
+                  <div className="flex items-start gap-2">
+                    <p className="text-sm text-slate-600 font-mono break-all flex-1">
+                      {request.wallet_address}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(request.id, request.wallet_address)}
+                      className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100"
+                      title="Copy wallet address"
+                    >
+                      {copiedId === request.id ? '✓' : <Copy className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
               </div>
 
