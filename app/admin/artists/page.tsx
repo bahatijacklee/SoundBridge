@@ -151,7 +151,7 @@ export default function AdminArtists() {
         </div>
         <Button 
           onClick={openAddModal}
-          className="gap-2 bg-slate-900 hover:bg-slate-800"
+          className="gap-2 bg-slate-900 hover:bg-slate-800 text-white"
         >
           <Plus className="w-4 h-4" />
           Add Artist
@@ -168,7 +168,7 @@ export default function AdminArtists() {
             <p className="text-slate-500 mb-6">Add your first artist to get started</p>
             <Button 
               onClick={openAddModal}
-              className="gap-2 bg-slate-900 hover:bg-slate-800"
+              className="gap-2 bg-slate-900 hover:bg-slate-800 text-white"
             >
               <Plus className="w-4 h-4" />
               Add First Artist
@@ -249,7 +249,7 @@ export default function AdminArtists() {
                   required
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
                   placeholder="Enter artist name"
                 />
               </div>
@@ -260,7 +260,7 @@ export default function AdminArtists() {
                   type="url"
                   value={form.image_url}
                   onChange={(e) => setForm({ ...form, image_url: e.target.value })}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
                   placeholder="https://..."
                 />
               </div>
@@ -271,7 +271,7 @@ export default function AdminArtists() {
                   type="text"
                   value={form.genre}
                   onChange={(e) => setForm({ ...form, genre: e.target.value })}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
                   placeholder="e.g. Hip-Hop, Pop, R&B"
                 />
               </div>
@@ -282,7 +282,7 @@ export default function AdminArtists() {
                   value={form.bio}
                   onChange={(e) => setForm({ ...form, bio: e.target.value })}
                   rows={4}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 resize-none"
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900 resize-none"
                   placeholder="Artist bio..."
                 />
               </div>
@@ -296,7 +296,7 @@ export default function AdminArtists() {
                   step="0.1"
                   value={form.rating}
                   onChange={(e) => setForm({ ...form, rating: e.target.value })}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
                   placeholder="0.0 - 10.0"
                 />
               </div>
@@ -323,7 +323,7 @@ export default function AdminArtists() {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" className="flex-1 bg-slate-900 hover:bg-slate-800">
+                <Button type="submit" className="flex-1 bg-slate-900 hover:bg-slate-800 text-white">
                   {modalMode === 'add' ? 'Add Artist' : 'Save Changes'}
                 </Button>
               </div>

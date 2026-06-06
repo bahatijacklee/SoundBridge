@@ -54,7 +54,7 @@ export default function AdminTasks() {
           <h1 className="text-3xl font-bold text-slate-900">Tasks</h1>
           <p className="text-slate-500 mt-1">Manage all tasks on the platform</p>
         </div>
-        <Button className="gap-2 bg-slate-900 hover:bg-slate-800">
+        <Button className="gap-2 bg-slate-900 hover:bg-slate-800 text-white">
           <Plus className="w-4 h-4" />
           Add Task
         </Button>
@@ -68,7 +68,7 @@ export default function AdminTasks() {
             </div>
             <h3 className="text-lg font-medium text-slate-900 mb-2">No tasks yet</h3>
             <p className="text-slate-500 mb-6">Create tasks for users to complete and earn rewards</p>
-            <Button className="gap-2 bg-slate-900 hover:bg-slate-800">
+            <Button className="gap-2 bg-slate-900 hover:bg-slate-800 text-white">
               <Plus className="w-4 h-4" />
               Create First Task
             </Button>

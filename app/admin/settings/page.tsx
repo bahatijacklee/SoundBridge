@@ -59,7 +59,7 @@ export default function AdminSettings() {
       </div>
 
       <div className="flex justify-end">
-        <Button className="bg-slate-900 hover:bg-slate-800">
+        <Button className="bg-slate-900 hover:bg-slate-800 text-white">
           Save Changes
         </Button>
       </div>
