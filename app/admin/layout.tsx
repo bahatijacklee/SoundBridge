@@ -16,9 +16,17 @@ import {
   Loader2,
   AlertCircle,
   ArrowLeft,
-  Music
+  Music,
+  Menu
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 
 export default function AdminLayout({
   children,
@@ -28,6 +36,7 @@ export default function AdminLayout({
   const [isLoading, setIsLoading] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
   const [user, setUser] = useState<any>(null)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -84,6 +93,7 @@ export default function AdminLayout({
     await supabase.auth.signOut()
     setIsAdmin(false)
     setUser(null)
+    setMobileNavOpen(false)
     router.push('/')
   }
 
@@ -118,7 +128,7 @@ export default function AdminLayout({
           <h2 className="text-2xl font-bold text-slate-900 mb-2">Admin Login Required</h2>
           <p className="text-slate-500 mb-8">Please log in with your admin account to access the dashboard.</p>
           <div className="space-y-3">
-            <Button asChild className="w-full bg-slate-900 hover:bg-slate-800">
+            <Button asChild className="w-full bg-slate-900 hover:bg-slate-800 text-white">
               <Link href="/admin/login">
                 <LogIn className="w-4 h-4 mr-2" />
                 Go to Login
@@ -221,13 +231,25 @@ export default function AdminLayout({
       {/* Mobile Header */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-white border-b border-slate-200 px-4 py-3">
         <div className="flex items-center justify-between">
-          <Link href="/admin" className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-slate-900 to-slate-700 rounded-lg flex items-center justify-center">
-              <Shield className="w-4 h-4 text-white" />
-            </div>
-            <h1 className="text-lg font-bold text-slate-900">SoundBridge Admin</h1>
-          </Link>
-          <Link href="/" className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen(true)}
+              className="p-2 text-slate-600 hover:bg-slate-50 rounded-lg"
+              aria-label="Open admin navigation"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+
+            <Link href="/admin" className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-gradient-to-br from-slate-900 to-slate-700 rounded-lg flex items-center justify-center">
+                <Shield className="w-4 h-4 text-white" />
+              </div>
+              <h1 className="text-lg font-bold text-slate-900">SoundBridge Admin</h1>
+            </Link>
+          </div>
+
+          <Link href="/" className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg" aria-label="Back to website">
             <ArrowLeft className="w-5 h-5" />
           </Link>
         </div>
@@ -239,6 +261,63 @@ export default function AdminLayout({
           {children}
         </div>
       </main>
+
+      <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+        <SheetContent side="left" className="p-0">
+          <SheetHeader className="p-4 border-b border-slate-200">
+            <SheetTitle className="flex items-center gap-3">
+              <div className="w-9 h-9 bg-gradient-to-br from-slate-900 to-slate-700 rounded-lg flex items-center justify-center">
+                <Shield className="w-4 h-4 text-white" />
+              </div>
+              <span>SoundBridge Admin</span>
+            </SheetTitle>
+            <SheetDescription>
+              Navigate the admin dashboard.
+            </SheetDescription>
+          </SheetHeader>
+
+          <nav className="p-4 space-y-1">
+            {navItems.map((item) => {
+              const isActive =
+                pathname === item.href ||
+                (item.href !== '/admin' && pathname.startsWith(item.href))
+
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMobileNavOpen(false)}
+                  className={`
+                    flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all
+                    ${isActive
+                      ? 'bg-slate-100 text-slate-900 border border-slate-200'
+                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    }
+                  `}
+                >
+                  <item.icon className="w-5 h-5" />
+                  {item.name}
+                </Link>
+              )
+            })}
+          </nav>
+
+          <div className="mt-auto p-4 border-t border-slate-200 space-y-2">
+            <div className="px-4 py-3 bg-slate-50 rounded-xl">
+              <p className="text-xs text-slate-400 font-medium mb-1">SIGNED IN AS</p>
+              <p className="text-sm font-medium text-slate-700 truncate">{user?.email}</p>
+            </div>
+            <Button
+              onClick={handleLogout}
+              variant="outline"
+              className="w-full border-slate-200 text-slate-700 hover:bg-slate-50 justify-start"
+            >
+              <LogOut className="w-4 h-4 mr-2" />
+              Sign Out
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }
