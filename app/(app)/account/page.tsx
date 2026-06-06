@@ -61,22 +61,25 @@ export default function AccountPage() {
   const supabase = createClient()
 
   useEffect(() => {
+    let cleanup: (() => void) | null = null
+
     const fetchData = async () => {
       try {
         const { data: { user: authUser } } = await supabase.auth.getUser()
 
         if (!authUser) return
 
-        // Fetch user data
-        const { data: user } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', authUser.id)
-          .single()
+        const fetchUserRow = async () => {
+          const { data: user } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', authUser.id)
+            .single()
 
-        if (user) {
-          setUserData(user)
+          if (user) setUserData(user)
         }
+
+        await fetchUserRow()
 
         // Fetch level progress
         const { data: level } = await supabase
@@ -110,6 +113,22 @@ export default function AccountPage() {
         if (userWallets) {
           setWallets(userWallets)
         }
+
+        const intervalId = window.setInterval(() => {
+          if (document.visibilityState !== 'visible') return
+          fetchUserRow()
+        }, 10000)
+
+        const handleVisibility = () => {
+          if (document.visibilityState === 'visible') fetchUserRow()
+        }
+
+        window.addEventListener('visibilitychange', handleVisibility)
+
+        cleanup = () => {
+          window.clearInterval(intervalId)
+          window.removeEventListener('visibilitychange', handleVisibility)
+        }
       } catch (error) {
         console.error('[v0] Error fetching account data:', error)
       } finally {
@@ -118,6 +137,10 @@ export default function AccountPage() {
     }
 
     fetchData()
+
+    return () => {
+      cleanup?.()
+    }
   }, [supabase])
 
   const refreshWallets = async (userId: string) => {

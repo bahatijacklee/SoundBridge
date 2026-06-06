@@ -49,16 +49,8 @@ export default function AdminWithdrawals() {
   const handleApprove = async (id: string) => {
     try {
       setProcessingId(id)
-      const { data: { user: currentUser } } = await supabase.auth.getUser()
-
-      await supabase
-        .from('withdrawal_requests')
-        .update({
-          status: 'approved',
-          processed_at: new Date().toISOString(),
-          processed_by: currentUser?.id
-        })
-        .eq('id', id)
+      const { error } = await supabase.rpc('approve_withdrawal_request', { p_request_id: id })
+      if (error) throw error
 
       // Refresh the list
       const { data } = await supabase
@@ -77,16 +69,8 @@ export default function AdminWithdrawals() {
   const handleReject = async (id: string) => {
     try {
       setProcessingId(id)
-      const { data: { user: currentUser } } = await supabase.auth.getUser()
-
-      await supabase
-        .from('withdrawal_requests')
-        .update({
-          status: 'rejected',
-          processed_at: new Date().toISOString(),
-          processed_by: currentUser?.id
-        })
-        .eq('id', id)
+      const { error } = await supabase.rpc('reject_withdrawal_request', { p_request_id: id })
+      if (error) throw error
 
       // Refresh the list
       const { data } = await supabase

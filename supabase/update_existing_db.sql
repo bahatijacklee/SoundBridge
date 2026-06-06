@@ -408,3 +408,80 @@ begin
     );
   end if;
 end $$;
+
+-- 12. Withdrawal approval/rejection RPCs (admin-only, atomic)
+create or replace function public.approve_withdrawal_request(p_request_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid;
+  v_amount numeric;
+  v_wallet_type text;
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'not_authorized';
+  end if;
+
+  select wr.user_id, wr.amount, wr.wallet_type
+  into v_user_id, v_amount, v_wallet_type
+  from public.withdrawal_requests wr
+  where wr.id = p_request_id
+  for update;
+
+  if not found then
+    raise exception 'request_not_found';
+  end if;
+
+  if (select status from public.withdrawal_requests where id = p_request_id) <> 'pending' then
+    return;
+  end if;
+
+  update public.users
+  set total_earnings = total_earnings - v_amount
+  where id = v_user_id
+    and total_earnings >= v_amount;
+
+  if not found then
+    raise exception 'insufficient_balance';
+  end if;
+
+  update public.withdrawal_requests
+  set status = 'approved',
+      processed_at = now(),
+      processed_by = auth.uid(),
+      updated_at = now()
+  where id = p_request_id
+    and status = 'pending';
+
+  insert into public.transactions (user_id, transaction_type, amount, description, status)
+  values (v_user_id, 'withdrawal', v_amount, 'Withdrawal approved', 'completed');
+end;
+$$;
+
+create or replace function public.reject_withdrawal_request(p_request_id uuid, p_notes text default null)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'not_authorized';
+  end if;
+
+  update public.withdrawal_requests
+  set status = 'rejected',
+      notes = coalesce(p_notes, notes),
+      processed_at = now(),
+      processed_by = auth.uid(),
+      updated_at = now()
+  where id = p_request_id
+    and status = 'pending';
+end;
+$$;
+
+grant execute on function public.approve_withdrawal_request(uuid) to authenticated;
+grant execute on function public.reject_withdrawal_request(uuid, text) to authenticated;
