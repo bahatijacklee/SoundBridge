@@ -91,7 +91,7 @@ export default function SignUpPage() {
             username,
             first_name: firstName,
             last_name: lastName,
-            phone_number: phoneNumber,
+            phone_number: phoneNumber.trim(),
           },
         },
       })

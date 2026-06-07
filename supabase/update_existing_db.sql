@@ -34,6 +34,61 @@ begin
   end if;
 end $$;
 
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'users' and column_name = 'phone_number'
+  ) then
+    alter table users add column phone_number text;
+  end if;
+end $$;
+
+create or replace function public.fill_users_phone_number()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_phone text;
+begin
+  if new.phone_number is null or btrim(new.phone_number) = '' then
+    select au.raw_user_meta_data->>'phone_number'
+    into v_phone
+    from auth.users au
+    where au.id = new.id;
+
+    if v_phone is not null and btrim(v_phone) <> '' then
+      new.phone_number := v_phone;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from information_schema.triggers
+    where trigger_name = 'fill_users_phone_number'
+  ) then
+    create trigger fill_users_phone_number
+    before insert on public.users
+    for each row
+    execute function public.fill_users_phone_number();
+  end if;
+end $$;
+
+update public.users u
+set phone_number = au.raw_user_meta_data->>'phone_number'
+from auth.users au
+where au.id = u.id
+  and (u.phone_number is null or btrim(u.phone_number) = '')
+  and au.raw_user_meta_data ? 'phone_number';
+
 -- 4. Create withdrawal_requests table ONLY IF NOT EXISTS
 do $$
 begin
@@ -485,3 +540,45 @@ $$;
 
 grant execute on function public.approve_withdrawal_request(uuid) to authenticated;
 grant execute on function public.reject_withdrawal_request(uuid, text) to authenticated;
+
+-- 13. Admin-only users listing (includes auth.users.email)
+create or replace function public.admin_list_users()
+returns table (
+  id uuid,
+  username text,
+  email text,
+  phone_number text,
+  total_earnings numeric,
+  total_points integer,
+  is_vip boolean,
+  is_admin boolean,
+  created_at timestamp without time zone
+)
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'not_authorized';
+  end if;
+
+  return query
+  select
+    u.id,
+    u.username,
+    au.email::text,
+    u.phone_number::text,
+    u.total_earnings,
+    u.total_points,
+    u.is_vip,
+    u.is_admin,
+    u.created_at
+  from public.users u
+  left join auth.users au on au.id = u.id
+  order by u.created_at desc;
+end;
+$$;
+
+revoke execute on function public.admin_list_users() from public;
+grant execute on function public.admin_list_users() to authenticated;

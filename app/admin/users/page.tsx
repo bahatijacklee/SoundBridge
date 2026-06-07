@@ -7,6 +7,8 @@ import { Users as UsersIcon, Loader2 } from 'lucide-react'
 interface User {
   id: string
   username: string
+  email?: string | null
+  phone_number?: string | null
   total_earnings: number
   total_points: number
   is_vip: boolean
@@ -22,10 +24,7 @@ export default function AdminUsers() {
   useEffect(() => {
     const fetchUsers = async () => {
       try {
-        const { data, error } = await supabase
-          .from('users')
-          .select('*')
-          .order('created_at', { ascending: false })
+        const { data, error } = await supabase.rpc('admin_list_users')
 
         if (error) throw error
         setUsers(data || [])
@@ -73,10 +72,18 @@ export default function AdminUsers() {
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-gradient-to-br from-purple-100 to-purple-200 rounded-full flex items-center justify-center">
                         <span className="text-sm font-bold text-purple-700">
-                          {user.username.charAt(0).toUpperCase()}
+                          {(user.username || user.email || '?').charAt(0).toUpperCase()}
                         </span>
                       </div>
-                      <span className="font-medium text-slate-900">{user.username}</span>
+                      <div className="min-w-0">
+                        <div className="font-medium text-slate-900 truncate">{user.username}</div>
+                        {user.email ? (
+                          <div className="text-sm text-slate-500 truncate">{user.email}</div>
+                        ) : null}
+                        <div className="text-sm text-slate-500 truncate">
+                          {user.phone_number ? user.phone_number : '—'}
+                        </div>
+                      </div>
                     </div>
                   </td>
                   <td className="px-6 py-4 font-medium text-slate-900">
