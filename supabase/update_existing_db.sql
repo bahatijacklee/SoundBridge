@@ -582,3 +582,51 @@ $$;
 
 revoke execute on function public.admin_list_users() from public;
 grant execute on function public.admin_list_users() to authenticated;
+
+-- 14. Admin deposits (credit user balance)
+create or replace function public.admin_create_deposit(
+  p_user_id uuid,
+  p_amount numeric,
+  p_description text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'not_authorized';
+  end if;
+
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'invalid_amount';
+  end if;
+
+  perform 1
+  from public.users u
+  where u.id = p_user_id
+  for update;
+
+  if not found then
+    raise exception 'user_not_found';
+  end if;
+
+  update public.users
+  set total_earnings = total_earnings + p_amount,
+      updated_at = now()
+  where id = p_user_id;
+
+  insert into public.transactions (user_id, transaction_type, amount, description, status)
+  values (
+    p_user_id,
+    'deposit',
+    p_amount,
+    coalesce(nullif(btrim(p_description), ''), 'Admin deposit'),
+    'completed'
+  );
+end;
+$$;
+
+revoke execute on function public.admin_create_deposit(uuid, numeric, text) from public;
+grant execute on function public.admin_create_deposit(uuid, numeric, text) to authenticated;

@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Users,
   Wallet,
+  DollarSign,
   ListTodo,
   Settings,
   LogOut,
@@ -102,6 +103,7 @@ export default function AdminLayout({
     { name: 'Users', icon: Users, href: '/admin/users' },
     { name: 'Artists', icon: Music, href: '/admin/artists' },
     { name: 'Withdrawals', icon: Wallet, href: '/admin/withdrawals' },
+    { name: 'Deposits', icon: DollarSign, href: '/admin/deposits' },
     { name: 'Tasks', icon: ListTodo, href: '/admin/tasks' },
     { name: 'Settings', icon: Settings, href: '/admin/settings' },
   ]
