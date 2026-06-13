@@ -32,6 +32,8 @@ type TaskFormState = {
   artist_id: string
 }
 
+const TASK_LEVEL_OPTIONS = ['bronze', 'silver', 'gold', 'platinum'] as const
+
 export default function AdminTasks() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [artists, setArtists] = useState<ArtistOption[]>([])
@@ -44,7 +46,7 @@ export default function AdminTasks() {
     task_type: 'engagement',
     reward_amount: '',
     reward_points: '',
-    required_level: '',
+    required_level: 'bronze',
     artist_id: '',
   })
   const supabase = createClient()
@@ -90,7 +92,7 @@ export default function AdminTasks() {
       task_type: 'engagement',
       reward_amount: '',
       reward_points: '',
-      required_level: '',
+      required_level: 'bronze',
       artist_id: '',
     })
     setModalMode('add')
@@ -104,7 +106,7 @@ export default function AdminTasks() {
       task_type: task.task_type ?? 'engagement',
       reward_amount: Number.isFinite(task.reward_amount) ? String(task.reward_amount) : '',
       reward_points: Number.isFinite(task.reward_points) ? String(task.reward_points) : '',
-      required_level: task.required_level ?? '',
+      required_level: task.required_level ?? 'bronze',
       artist_id: task.artist_id ?? '',
     })
     setModalMode('edit')
@@ -129,13 +131,14 @@ export default function AdminTasks() {
       if (!Number.isFinite(rewardAmount)) throw new Error('Invalid reward amount')
       if (!Number.isFinite(rewardPoints)) throw new Error('Invalid reward points')
 
+      const normalizedLevel = form.required_level.trim().toLowerCase()
       const payload: Partial<Task> = {
         title,
         task_type: taskType,
         description: form.description.trim() ? form.description.trim() : '',
         reward_amount: rewardAmount,
         reward_points: rewardPoints,
-        required_level: form.required_level.trim() ? form.required_level.trim() : null,
+        required_level: normalizedLevel ? normalizedLevel : 'bronze',
         artist_id: form.artist_id ? form.artist_id : null,
       }
 
@@ -296,13 +299,17 @@ export default function AdminTasks() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Required Level</label>
-                  <input
-                    type="text"
+                  <select
                     value={form.required_level}
                     onChange={(e) => setForm({ ...form, required_level: e.target.value })}
-                    className="w-full px-4 py-2 border border-slate-200 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
-                    placeholder="e.g. bronze"
-                  />
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  >
+                    {TASK_LEVEL_OPTIONS.map((level) => (
+                      <option key={level} value={level}>
+                        {level.charAt(0).toUpperCase() + level.slice(1)}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Artist (optional)</label>

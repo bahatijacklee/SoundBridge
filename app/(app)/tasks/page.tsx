@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Button } from '@/components/ui/button'
-import { Heart, UserPlus, BookOpen, ShoppingBag, CheckCircle, Lock } from 'lucide-react'
+import { Heart, UserPlus, BookOpen, ShoppingBag, CheckCircle, Lock, Loader2, DollarSign } from 'lucide-react'
+
+type LevelName = 'bronze' | 'silver' | 'gold' | 'platinum'
 
 interface Task {
   id: string
@@ -14,7 +15,6 @@ interface Task {
   reward_points: number
   artist_id: string | null
   required_level: string | null
-  isLocked?: boolean
 }
 
 interface Artist {
@@ -23,9 +23,10 @@ interface Artist {
   image_url: string
 }
 
-interface CompletedTask {
+interface UserTask {
   task_id: string
-  completion_date: string
+  task_level: string | null
+  level_cycle_id: string | null
 }
 
 interface UserStats {
@@ -33,7 +34,21 @@ interface UserStats {
   total_points: number
 }
 
-const TASK_ICONS: Record<string, React.ReactNode> = {
+interface LevelProgress {
+  current_level: LevelName
+  active_level_cycle_id: string | null
+  progress_percentage: number
+  total_tasks_completed: number
+}
+
+interface LevelPricing {
+  level: LevelName
+  price: number
+}
+
+const LEVELS: LevelName[] = ['bronze', 'silver', 'gold', 'platinum']
+
+const TASK_ICONS: Record<string, ReactNode> = {
   follow: <UserPlus className="w-6 h-6" />,
   like: <Heart className="w-6 h-6" />,
   read_bio: <BookOpen className="w-6 h-6" />,
@@ -47,203 +62,164 @@ const TASK_COLORS: Record<string, string> = {
   buy_card: 'from-green-600 to-green-700',
 }
 
+const LEVEL_CARD_COLORS: Record<LevelName, string> = {
+  bronze: 'from-amber-700 to-amber-800',
+  silver: 'from-slate-400 to-slate-500',
+  gold: 'from-yellow-500 to-yellow-600',
+  platinum: 'from-cyan-500 to-sky-600',
+}
+
 export default function TasksPage() {
+  const supabase = createClient()
   const [tasks, setTasks] = useState<Task[]>([])
   const [artists, setArtists] = useState<Record<string, Artist>>({})
-  const [completedToday, setCompletedToday] = useState<CompletedTask[]>([])
+  const [completedTasks, setCompletedTasks] = useState<UserTask[]>([])
   const [userStats, setUserStats] = useState<UserStats | null>(null)
-  const [isVip, setIsVip] = useState(false)
+  const [levelProgress, setLevelProgress] = useState<LevelProgress>({
+    current_level: 'bronze',
+    active_level_cycle_id: null,
+    progress_percentage: 0,
+    total_tasks_completed: 0,
+  })
+  const [levelPricing, setLevelPricing] = useState<Record<LevelName, number>>({
+    bronze: 0,
+    silver: 15,
+    gold: 50,
+    platinum: 150,
+  })
   const [loading, setLoading] = useState(true)
   const [sortBy, setSortBy] = useState('reward')
-  const supabase = createClient()
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [processingTaskId, setProcessingTaskId] = useState<string | null>(null)
+  const [processingLevel, setProcessingLevel] = useState<LevelName | null>(null)
 
-  // Get today's date in YYYY-MM-DD format
-  const getTodayDate = () => {
-    const date = new Date()
-    return date.toISOString().split('T')[0]
-  }
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const { data: { user: authUser } } = await supabase.auth.getUser()
-
-        if (!authUser) return
-
-        // Fetch user VIP status
-        const { data: userData } = await supabase
-          .from('users')
-          .select('is_vip')
-          .eq('id', authUser.id)
-          .single()
-
-        if (userData) {
-          setIsVip(userData.is_vip)
-        }
-
-        // Fetch all tasks
-        const { data: tasksData } = await supabase
-          .from('tasks')
-          .select('*')
-          .order('reward_amount', { ascending: false })
-
-        if (tasksData) {
-          setTasks(tasksData)
-
-          // Fetch artist details for tasks
-          const artistIds = [...new Set(tasksData.map((t) => t.artist_id))].filter(
-            (id) => id !== null
-          )
-
-          if (artistIds.length > 0) {
-            const { data: artistData } = await supabase
-              .from('artists')
-              .select('*')
-              .in('id', artistIds)
-
-            if (artistData) {
-              const artistMap = artistData.reduce(
-                (acc, artist) => {
-                  acc[artist.id] = artist
-                  return acc
-                },
-                {} as Record<string, Artist>
-              )
-              setArtists(artistMap)
-            }
-          }
-        }
-
-        // Fetch today's completed tasks
-        const todayDate = getTodayDate()
-        const { data: completed } = await supabase
-          .from('user_tasks')
-          .select('task_id, completion_date')
-          .eq('user_id', authUser.id)
-          .eq('completion_date', todayDate)
-
-        if (completed) {
-          setCompletedToday(completed)
-        }
-
-        // Fetch user stats
-        const { data: user } = await supabase
-          .from('users')
-          .select('total_earnings, total_points')
-          .eq('id', authUser.id)
-          .single()
-
-        if (user) {
-          setUserStats(user)
-        }
-      } catch (error) {
-        console.error('[v0] Error fetching tasks:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchData()
-  }, [supabase])
-
-  const handleCompleteTask = async (taskId: string) => {
+  const fetchData = async () => {
     try {
-      const { data: { user: authUser } } = await supabase.auth.getUser()
+      const {
+        data: { user: authUser },
+      } = await supabase.auth.getUser()
 
       if (!authUser) return
 
-      const task = tasks.find((t) => t.id === taskId)
-      if (!task) return
-
-      const todayDate = getTodayDate()
-
-      // Mark task as completed for today
-      const { error } = await supabase.from('user_tasks').insert({
-        user_id: authUser.id,
-        task_id: taskId,
-        earned_amount: task.reward_amount,
-        earned_points: task.reward_points,
-        completion_date: todayDate,
-      })
-
-      if (!error) {
-        // Update user earnings (accumulative - adds to total, never resets)
-        const currentStats = userStats || { total_earnings: 0, total_points: 0 }
-        const newEarnings = currentStats.total_earnings + task.reward_amount
-        const newPoints = currentStats.total_points + task.reward_points
-
-        await supabase
-          .from('users')
-          .update({
-            total_earnings: newEarnings,
-            total_points: newPoints,
-          })
-          .eq('id', authUser.id)
-
-        // Update local stats
-        setUserStats({
-          total_earnings: newEarnings,
-          total_points: newPoints,
-        })
-
-        // Refresh today's completed tasks
-        const { data: updated } = await supabase
-          .from('user_tasks')
-          .select('task_id, completion_date')
+      const [tasksRes, userTasksRes, userRes, levelRes, pricingRes] = await Promise.all([
+        supabase.from('tasks').select('*').order('reward_amount', { ascending: false }),
+        supabase.from('user_tasks').select('task_id, task_level, level_cycle_id').eq('user_id', authUser.id),
+        supabase.from('users').select('total_earnings, total_points').eq('id', authUser.id).single(),
+        supabase
+          .from('level_progress')
+          .select('current_level, active_level_cycle_id, progress_percentage, total_tasks_completed')
           .eq('user_id', authUser.id)
-          .eq('completion_date', todayDate)
+          .maybeSingle(),
+        supabase.from('level_pricing').select('level, price'),
+      ])
 
-        if (updated) {
-          setCompletedToday(updated)
+      if (tasksRes.error) throw tasksRes.error
+      if (userTasksRes.error) throw userTasksRes.error
+      if (userRes.error) throw userRes.error
+      if (levelRes.error) throw levelRes.error
+      if (pricingRes.error) throw pricingRes.error
+
+      const tasksData = (tasksRes.data as Task[]) || []
+      setTasks(tasksData)
+      setCompletedTasks((userTasksRes.data as UserTask[]) || [])
+      setUserStats(userRes.data as UserStats)
+
+      if (levelRes.data) {
+        setLevelProgress(levelRes.data as LevelProgress)
+      } else {
+        setLevelProgress({
+          current_level: 'bronze',
+          active_level_cycle_id: null,
+          progress_percentage: 0,
+          total_tasks_completed: 0,
+        })
+      }
+
+      if (pricingRes.data) {
+        const pricingMap = { bronze: 0, silver: 15, gold: 50, platinum: 150 }
+        for (const row of pricingRes.data as LevelPricing[]) {
+          pricingMap[row.level] = Number(row.price)
         }
+        setLevelPricing(pricingMap)
+      }
+
+      const artistIds = [...new Set(tasksData.map((task) => task.artist_id).filter(Boolean))]
+      if (artistIds.length > 0) {
+        const { data: artistData, error: artistError } = await supabase
+          .from('artists')
+          .select('*')
+          .in('id', artistIds)
+
+        if (artistError) throw artistError
+
+        const artistMap = ((artistData as Artist[]) || []).reduce(
+          (acc, artist) => {
+            acc[artist.id] = artist
+            return acc
+          },
+          {} as Record<string, Artist>,
+        )
+
+        setArtists(artistMap)
+      } else {
+        setArtists({})
       }
     } catch (error) {
-      console.error('[v0] Error completing task:', error)
+      console.error('Error fetching tasks:', error)
+      setActionError('Failed to load tasks and levels')
+    } finally {
+      setLoading(false)
     }
   }
 
-  // Organize tasks by level and VIP status
-  // If required_level is not set, determine by reward amount
-  const enrichedTasks = tasks.map((task, index) => {
-    let level = task.required_level || 'bronze'
-    
-    // If no explicit level, assign based on reward amount
-    if (!task.required_level) {
-      if (task.reward_amount < 10) {
-        level = 'bronze'
-      } else if (task.reward_amount < 20) {
-        level = 'silver'
-      } else if (task.reward_amount < 50) {
-        level = 'gold'
-      } else {
-        level = 'platinum'
-      }
-    }
-    return { ...task, required_level: level }
-  })
+  useEffect(() => {
+    fetchData()
+  }, [supabase])
 
-  const bronzeTasks = enrichedTasks.filter(
-    (task) => task.required_level === 'bronze'
-  )
-  
-  const vipLockedTasks = enrichedTasks.filter(
-    (task) =>
-      task.required_level && 
-      ['silver', 'gold', 'platinum'].includes(task.required_level)
+  const normalizedTasks = useMemo(
+    () =>
+      tasks.map((task) => ({
+        ...task,
+        required_level: (task.required_level?.toLowerCase() || 'bronze') as LevelName,
+      })),
+    [tasks],
   )
 
-  // Limit free tasks to 3 for non-VIP users
-  const displayedBronzeTasks = isVip ? bronzeTasks : bronzeTasks.slice(0, 3)
+  const bronzeCompletedIds = useMemo(
+    () =>
+      new Set(
+        completedTasks
+          .filter((task) => (task.task_level?.toLowerCase() || 'bronze') === 'bronze')
+          .map((task) => task.task_id),
+      ),
+    [completedTasks],
+  )
 
-  // Create task list with lock state
-  const allDisplayedTasks = isVip
-    ? enrichedTasks.map((task) => ({ ...task, isLocked: false }))
-    : [
-        ...displayedBronzeTasks.map((task) => ({ ...task, isLocked: false })),
-        ...vipLockedTasks.map((task) => ({ ...task, isLocked: true })),
-      ]
+  const activeLevelCompletedIds = useMemo(
+    () =>
+      new Set(
+        completedTasks
+          .filter(
+            (task) =>
+              task.level_cycle_id &&
+              task.level_cycle_id === levelProgress.active_level_cycle_id &&
+              task.task_level?.toLowerCase() === levelProgress.current_level,
+          )
+          .map((task) => task.task_id),
+      ),
+    [completedTasks, levelProgress.active_level_cycle_id, levelProgress.current_level],
+  )
 
-  const sortedTasks = allDisplayedTasks.sort((a, b) => {
+  const activeLevelTaskCount = normalizedTasks.filter(
+    (task) => task.required_level === levelProgress.current_level && task.required_level !== 'bronze',
+  ).length
+
+  const remainingActiveLevelTasks =
+    levelProgress.current_level === 'bronze'
+      ? 0
+      : Math.max(activeLevelTaskCount - activeLevelCompletedIds.size, 0)
+
+  const sortedTasks = [...normalizedTasks].sort((a, b) => {
     switch (sortBy) {
       case 'reward':
         return b.reward_amount - a.reward_amount
@@ -255,6 +231,36 @@ export default function TasksPage() {
         return 0
     }
   })
+
+  const handleCompleteTask = async (taskId: string) => {
+    try {
+      setActionError(null)
+      setProcessingTaskId(taskId)
+      const { error } = await supabase.rpc('complete_task', { p_task_id: taskId })
+      if (error) throw error
+      await fetchData()
+    } catch (error: any) {
+      console.error('Error completing task:', error)
+      setActionError(error?.message || 'Failed to complete task')
+    } finally {
+      setProcessingTaskId(null)
+    }
+  }
+
+  const handlePurchaseLevel = async (level: LevelName) => {
+    try {
+      setActionError(null)
+      setProcessingLevel(level)
+      const { error } = await supabase.rpc('purchase_task_level', { p_level: level })
+      if (error) throw error
+      await fetchData()
+    } catch (error: any) {
+      console.error('Error purchasing level:', error)
+      setActionError(error?.message || 'Failed to unlock level')
+    } finally {
+      setProcessingLevel(null)
+    }
+  }
 
   if (loading) {
     return (
@@ -269,41 +275,123 @@ export default function TasksPage() {
 
   return (
     <div className="space-y-4 md:space-y-6">
-      {/* VIP Status Banner */}
-      {!isVip && (
-        <div className="bg-gradient-to-r from-amber-900 to-orange-900 border-2 border-amber-600 border-opacity-50 rounded-xl p-4 md:p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-amber-200 font-bold text-sm md:text-base mb-1">
-                Free Plan - Limited Access
+      <div className="bg-gradient-to-r from-slate-800 to-slate-700 border border-yellow-500 border-opacity-30 rounded-xl p-4 md:p-6">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <p className="text-sm text-gray-400 mb-1">Current active level</p>
+            <h2 className="text-2xl md:text-3xl font-bold text-white capitalize">
+              {levelProgress.current_level}
+            </h2>
+            <p className="text-sm text-gray-300 mt-2">
+              Bronze tasks are free and can only be completed once. Higher levels unlock only after purchase and return to Bronze once every task in that level is completed.
+            </p>
+          </div>
+          <div className="bg-slate-900 bg-opacity-60 rounded-xl px-5 py-4">
+            <p className="text-xs uppercase tracking-wide text-gray-400 mb-1">Available balance</p>
+            <p className="text-3xl font-bold text-yellow-400">
+              ${Number(userStats?.total_earnings || 0).toFixed(2)}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        {LEVELS.map((level) => {
+          const price = levelPricing[level] ?? 0
+          const isActive = levelProgress.current_level === level
+          const balance = Number(userStats?.total_earnings || 0)
+          const canPurchase = level !== 'bronze' && levelProgress.current_level === 'bronze'
+          const hasEnoughBalance = balance >= price
+
+          return (
+            <div
+              key={level}
+              className={`rounded-xl border p-5 ${
+                isActive
+                  ? 'border-yellow-400 border-opacity-60 bg-yellow-500 bg-opacity-5'
+                  : 'border-gray-700 bg-slate-800'
+              }`}
+            >
+              <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${LEVEL_CARD_COLORS[level]} flex items-center justify-center mb-4`}>
+                <DollarSign className="w-6 h-6 text-white" />
+              </div>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-lg font-bold text-white capitalize">{level}</h3>
+                <span className="text-yellow-400 font-bold">${price.toFixed(2)}</span>
+              </div>
+              <p className="text-sm text-gray-400 mb-4">
+                {level === 'bronze'
+                  ? 'Free starter tasks that remain completed once claimed.'
+                  : `Unlock all ${level} tasks for one paid cycle.`}
               </p>
-              <p className="text-amber-100 text-xs md:text-sm">
-                You have access to <span className="font-bold">{displayedBronzeTasks.length} of {bronzeTasks.length}</span> free tasks daily. 
-                Unlock all tasks and higher rewards with <span className="font-bold">VIP membership</span>!
+
+              {level === 'bronze' ? (
+                <div className="rounded-lg bg-green-500 bg-opacity-10 border border-green-500 border-opacity-30 px-3 py-2 text-sm text-green-400">
+                  Always available
+                </div>
+              ) : isActive ? (
+                <div className="rounded-lg bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-30 px-3 py-2 text-sm text-yellow-300">
+                  {remainingActiveLevelTasks} tasks remaining in this cycle
+                </div>
+              ) : canPurchase ? (
+                <button
+                  type="button"
+                  onClick={() => handlePurchaseLevel(level)}
+                  disabled={processingLevel === level || !hasEnoughBalance}
+                  className={`w-full rounded-lg py-2.5 font-bold transition-all ${
+                    hasEnoughBalance
+                      ? 'bg-yellow-400 hover:bg-yellow-500 text-slate-900'
+                      : 'bg-slate-700 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  {processingLevel === level
+                    ? 'Unlocking...'
+                    : hasEnoughBalance
+                      ? `Unlock ${level}`
+                      : `Need $${(price - balance).toFixed(2)} more`}
+                </button>
+              ) : (
+                <div className="rounded-lg bg-slate-700 px-3 py-2 text-sm text-gray-300">
+                  Finish the active level first
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {levelProgress.current_level !== 'bronze' && (
+        <div className="bg-gradient-to-r from-purple-900 to-slate-900 border border-purple-500 border-opacity-40 rounded-xl p-4 md:p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-purple-200 capitalize">
+                {levelProgress.current_level} level is active
+              </p>
+              <p className="text-sm text-gray-300 mt-1">
+                Complete all tasks in this level to lock it again and return to Bronze automatically.
               </p>
             </div>
-            <Lock className="w-6 h-6 md:w-8 md:h-8 text-amber-400 flex-shrink-0" />
+            <div className="min-w-40">
+              <div className="w-full bg-slate-700 rounded-full h-2">
+                <div
+                  className="bg-yellow-400 h-2 rounded-full transition-all"
+                  style={{ width: `${levelProgress.progress_percentage || 0}%` }}
+                />
+              </div>
+              <p className="text-xs text-right text-gray-300 mt-2">
+                {levelProgress.total_tasks_completed}/{activeLevelTaskCount} completed
+              </p>
+            </div>
           </div>
         </div>
       )}
 
-      {isVip && (
-        <div className="bg-gradient-to-r from-yellow-900 to-amber-900 border-2 border-yellow-500 border-opacity-50 rounded-xl p-4 md:p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-yellow-200 font-bold text-sm md:text-base mb-1">
-                VIP Member ✨
-              </p>
-              <p className="text-yellow-100 text-xs md:text-sm">
-                You have unlimited access to all tasks and exclusive rewards!
-              </p>
-            </div>
-            <div className="text-3xl">👑</div>
-          </div>
+      {actionError ? (
+        <div className="rounded-xl border border-red-500 border-opacity-40 bg-red-500 bg-opacity-10 px-4 py-3 text-sm text-red-300">
+          {actionError}
         </div>
-      )}
+      ) : null}
 
-      {/* Sort Options */}
       <div className="flex gap-2 md:gap-3 overflow-x-auto pb-2">
         {[
           { label: 'Most Rewarding', value: 'reward' },
@@ -324,65 +412,59 @@ export default function TasksPage() {
         ))}
       </div>
 
-      {/* Tasks Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {sortedTasks.map((task) => {
-          const isCompletedToday = completedToday.some((ct) => ct.task_id === task.id)
+          const taskLevel = task.required_level as LevelName
+          const isBronze = taskLevel === 'bronze'
+          const isCompleted = isBronze
+            ? bronzeCompletedIds.has(task.id)
+            : activeLevelCompletedIds.has(task.id)
+          const isLocked = !isBronze && levelProgress.current_level !== taskLevel
           const artist = task.artist_id ? artists[task.artist_id] : null
 
           return (
             <div
               key={task.id}
               className={`border rounded-xl p-4 md:p-6 transition-all ${
-                isCompletedToday
+                isCompleted
                   ? 'border-green-500 border-opacity-30 bg-green-500 bg-opacity-5'
-                  : task.isLocked
+                  : isLocked
                     ? 'border-gray-600 border-opacity-50 bg-slate-800 bg-opacity-40'
                     : 'border-gray-700 bg-slate-800 hover:border-yellow-400 hover:border-opacity-50'
               }`}
             >
               <div className="flex items-start gap-3 md:gap-4">
-                {/* Icon */}
-                <div
-                  className={`p-3 rounded-lg bg-gradient-to-br ${TASK_COLORS[task.task_type]} text-white flex-shrink-0`}
-                >
-                  {TASK_ICONS[task.task_type]}
+                <div className={`p-3 rounded-lg bg-gradient-to-br ${TASK_COLORS[task.task_type] || 'from-slate-600 to-slate-700'} text-white flex-shrink-0`}>
+                  {TASK_ICONS[task.task_type] || <BookOpen className="w-6 h-6" />}
                 </div>
 
-                {/* Content */}
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between sm:gap-2 mb-2">
                     <div className="min-w-0 flex-1">
                       <h3 className="text-base md:text-lg font-bold text-white break-words">
                         {task.title}
                       </h3>
-                      {artist && (
+                      {artist ? (
                         <p className="text-xs md:text-sm text-gray-400 truncate">
-                          Artist:{' '}
-                          <span className="font-semibold text-white">
-                            {artist.name}
-                          </span>
+                          Artist: <span className="font-semibold text-white">{artist.name}</span>
                         </p>
-                      )}
+                      ) : null}
                     </div>
 
-                    {isCompletedToday && (
+                    {isCompleted ? (
                       <div className="flex items-center gap-1 bg-green-500 bg-opacity-20 px-2 py-1 rounded-full border border-green-500 border-opacity-50 flex-shrink-0 text-nowrap mt-1 sm:mt-0">
                         <CheckCircle className="w-3 h-3 md:w-4 md:h-4 text-green-400" />
-                        <span className="text-xs font-semibold text-green-400">
-                          Today
-                        </span>
+                        <span className="text-xs font-semibold text-green-400">Completed</span>
                       </div>
-                    )}
+                    ) : null}
                   </div>
 
-                  {task.description && (
+                  {task.description ? (
                     <p className="text-xs md:text-sm text-gray-400 mb-3 line-clamp-2">
                       {task.description}
                     </p>
-                  )}
+                  ) : null}
 
-                  {/* Rewards */}
                   <div className="flex flex-wrap items-center gap-2 md:gap-4 mb-3">
                     <div className="flex items-center gap-1 md:gap-2">
                       <span className="text-xl md:text-2xl font-bold text-yellow-400">
@@ -399,35 +481,46 @@ export default function TasksPage() {
                     </div>
                   </div>
 
-                  {/* Requirements */}
-                  {task.required_level && (
-                    <p className="text-xs text-gray-500 mb-3">
-                      Requires: {task.required_level.toUpperCase()} level or higher
-                    </p>
-                  )}
+                  <p className="text-xs text-gray-500 mb-3">
+                    {isBronze
+                      ? 'Bronze task: free and can only be completed once.'
+                      : `Requires active ${taskLevel.toUpperCase()} level.`}
+                  </p>
 
-                  {/* Action Button */}
                   <div className="relative group">
                     <button
-                      onClick={() => !task.isLocked && handleCompleteTask(task.id)}
-                      disabled={isCompletedToday || task.isLocked}
+                      onClick={() => !isLocked && !isCompleted && handleCompleteTask(task.id)}
+                      disabled={isCompleted || isLocked || processingTaskId === task.id}
                       className={`w-full font-bold py-2 md:py-2.5 text-sm md:text-base rounded-lg transition-all ${
-                        task.isLocked
+                        isLocked
                           ? 'bg-gray-600 text-gray-400 cursor-not-allowed opacity-50'
-                          : isCompletedToday
-                            ? 'bg-green-600 hover:bg-green-700 text-white cursor-not-allowed opacity-75'
+                          : isCompleted
+                            ? 'bg-green-600 text-white cursor-not-allowed opacity-80'
                             : 'bg-yellow-400 hover:bg-yellow-500 text-slate-900 hover:shadow-lg'
                       }`}
                     >
-                      {task.isLocked ? 'VIP Only' : isCompletedToday ? 'Completed Today' : 'Complete Task'}
+                      {processingTaskId === task.id ? (
+                        <span className="inline-flex items-center justify-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Processing...
+                        </span>
+                      ) : isLocked ? (
+                        'Locked'
+                      ) : isCompleted ? (
+                        'Completed'
+                      ) : (
+                        'Complete Task'
+                      )}
                     </button>
-                    {/* Hover Tooltip for Locked Tasks */}
-                    {task.isLocked && (
+                    {isLocked ? (
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 md:px-3 py-1 md:py-2 bg-slate-800 border border-amber-500 border-opacity-50 rounded-lg text-xs text-white font-semibold whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
-                        Upgrade to VIP to unlock
+                        <span className="inline-flex items-center gap-1">
+                          <Lock className="w-3 h-3" />
+                          Unlock {taskLevel} first
+                        </span>
                         <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -436,11 +529,11 @@ export default function TasksPage() {
         })}
       </div>
 
-      {sortedTasks.length === 0 && (
+      {sortedTasks.length === 0 ? (
         <div className="text-center py-12">
           <p className="text-gray-400 text-lg">No tasks available</p>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }

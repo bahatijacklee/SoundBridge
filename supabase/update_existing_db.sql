@@ -630,3 +630,377 @@ $$;
 
 revoke execute on function public.admin_create_deposit(uuid, numeric, text) from public;
 grant execute on function public.admin_create_deposit(uuid, numeric, text) to authenticated;
+
+-- 15. Task level pricing + paid level workflow
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_name = 'level_pricing'
+  ) then
+    create table public.level_pricing (
+      level text primary key,
+      price numeric not null default 0,
+      updated_at timestamp without time zone default now(),
+      constraint level_pricing_level_check check (level in ('bronze', 'silver', 'gold', 'platinum')),
+      constraint level_pricing_price_check check (price >= 0)
+    );
+  end if;
+end $$;
+
+alter table public.level_pricing enable row level security;
+
+insert into public.level_pricing (level, price)
+values
+  ('bronze', 0),
+  ('silver', 15),
+  ('gold', 50),
+  ('platinum', 150)
+on conflict (level) do nothing;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'level_progress' and column_name = 'active_level_cycle_id'
+  ) then
+    alter table public.level_progress add column active_level_cycle_id uuid;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'user_tasks' and column_name = 'task_level'
+  ) then
+    alter table public.user_tasks add column task_level text;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'user_tasks' and column_name = 'level_cycle_id'
+  ) then
+    alter table public.user_tasks add column level_cycle_id uuid;
+  end if;
+end $$;
+
+update public.level_progress
+set current_level = 'bronze'
+where current_level is null or btrim(current_level) = '';
+
+insert into public.level_progress (user_id, current_level, progress_percentage, total_tasks_completed, total_artists_engaged, updated_at)
+select u.id, 'bronze', 0, 0, 0, now()
+from public.users u
+where not exists (
+  select 1
+  from public.level_progress lp
+  where lp.user_id = u.id
+);
+
+update public.user_tasks ut
+set task_level = lower(coalesce(t.required_level, 'bronze'))
+from public.tasks t
+where t.id = ut.task_id
+  and (ut.task_level is null or btrim(ut.task_level) = '');
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_indexes
+    where schemaname = 'public'
+      and tablename = 'tasks'
+      and indexname = 'idx_tasks_required_level'
+  ) then
+    create index idx_tasks_required_level on public.tasks(required_level);
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_indexes
+    where schemaname = 'public'
+      and tablename = 'user_tasks'
+      and indexname = 'idx_user_tasks_user_level_cycle'
+  ) then
+    create index idx_user_tasks_user_level_cycle on public.user_tasks(user_id, task_level, level_cycle_id);
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.triggers
+    where trigger_name = 'update_level_pricing_updated_at'
+  ) then
+    create trigger update_level_pricing_updated_at
+    before update on public.level_pricing
+    for each row
+    execute function update_updated_at_column();
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where tablename = 'level_pricing' and policyname = 'Authenticated users can read level pricing'
+  ) then
+    create policy "Authenticated users can read level pricing"
+    on public.level_pricing
+    for select
+    to authenticated
+    using (true);
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where tablename = 'level_pricing' and policyname = 'Admins can manage level pricing'
+  ) then
+    create policy "Admins can manage level pricing"
+    on public.level_pricing
+    for all
+    to authenticated
+    using (
+      exists (
+        select 1
+        from public.admin_users
+        where public.admin_users.user_id = auth.uid()
+      )
+    )
+    with check (
+      exists (
+        select 1
+        from public.admin_users
+        where public.admin_users.user_id = auth.uid()
+      )
+    );
+  end if;
+end $$;
+
+create or replace function public.purchase_task_level(p_level text)
+returns void
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_level text := lower(coalesce(btrim(p_level), ''));
+  v_price numeric;
+  v_balance numeric;
+  v_current_level text;
+  v_level_task_count integer;
+  v_cycle_id uuid := gen_random_uuid();
+begin
+  if auth.uid() is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  if v_level not in ('silver', 'gold', 'platinum') then
+    raise exception 'invalid_level';
+  end if;
+
+  select count(*)
+  into v_level_task_count
+  from public.tasks
+  where lower(coalesce(required_level, 'bronze')) = v_level;
+
+  if v_level_task_count = 0 then
+    raise exception 'level_has_no_tasks';
+  end if;
+
+  insert into public.level_progress (user_id, current_level, progress_percentage, total_tasks_completed, total_artists_engaged, updated_at)
+  values (auth.uid(), 'bronze', 0, 0, 0, now())
+  on conflict (user_id) do nothing;
+
+  select current_level
+  into v_current_level
+  from public.level_progress
+  where user_id = auth.uid()
+  for update;
+
+  if coalesce(v_current_level, 'bronze') <> 'bronze' then
+    raise exception 'complete_current_level_first';
+  end if;
+
+  select price
+  into v_price
+  from public.level_pricing
+  where level = v_level;
+
+  if v_price is null then
+    raise exception 'pricing_not_configured';
+  end if;
+
+  select total_earnings
+  into v_balance
+  from public.users
+  where id = auth.uid()
+  for update;
+
+  if not found then
+    raise exception 'user_not_found';
+  end if;
+
+  if v_balance < v_price then
+    raise exception 'insufficient_balance';
+  end if;
+
+  update public.users
+  set total_earnings = total_earnings - v_price,
+      updated_at = now()
+  where id = auth.uid();
+
+  update public.level_progress
+  set current_level = v_level,
+      active_level_cycle_id = v_cycle_id,
+      progress_percentage = 0,
+      total_tasks_completed = 0,
+      total_artists_engaged = 0,
+      updated_at = now()
+  where user_id = auth.uid();
+
+  insert into public.transactions (user_id, transaction_type, amount, description, status)
+  values (
+    auth.uid(),
+    'level_purchase',
+    v_price,
+    initcap(v_level) || ' level unlock purchase',
+    'completed'
+  );
+end;
+$$;
+
+create or replace function public.complete_task(p_task_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_task_level text;
+  v_reward_amount numeric;
+  v_reward_points integer;
+  v_current_level text;
+  v_cycle_id uuid;
+  v_total_level_tasks integer;
+  v_completed_level_tasks integer;
+  v_progress integer;
+begin
+  if v_user_id is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  insert into public.level_progress (user_id, current_level, progress_percentage, total_tasks_completed, total_artists_engaged, updated_at)
+  values (v_user_id, 'bronze', 0, 0, 0, now())
+  on conflict (user_id) do nothing;
+
+  select lower(coalesce(required_level, 'bronze')), reward_amount, reward_points
+  into v_task_level, v_reward_amount, v_reward_points
+  from public.tasks
+  where id = p_task_id;
+
+  if not found then
+    raise exception 'task_not_found';
+  end if;
+
+  select current_level, active_level_cycle_id
+  into v_current_level, v_cycle_id
+  from public.level_progress
+  where user_id = v_user_id
+  for update;
+
+  if v_task_level = 'bronze' then
+    if exists (
+      select 1
+      from public.user_tasks
+      where user_id = v_user_id
+        and task_id = p_task_id
+        and lower(coalesce(task_level, 'bronze')) = 'bronze'
+    ) then
+      raise exception 'task_already_completed';
+    end if;
+
+    insert into public.user_tasks (user_id, task_id, earned_amount, earned_points, completion_date, task_level)
+    values (v_user_id, p_task_id, v_reward_amount, v_reward_points, current_date, 'bronze');
+  else
+    if coalesce(v_current_level, 'bronze') <> v_task_level then
+      raise exception 'level_locked';
+    end if;
+
+    if v_cycle_id is null then
+      raise exception 'level_not_purchased';
+    end if;
+
+    if exists (
+      select 1
+      from public.user_tasks
+      where user_id = v_user_id
+        and task_id = p_task_id
+        and level_cycle_id = v_cycle_id
+    ) then
+      raise exception 'task_already_completed';
+    end if;
+
+    insert into public.user_tasks (user_id, task_id, earned_amount, earned_points, completion_date, task_level, level_cycle_id)
+    values (v_user_id, p_task_id, v_reward_amount, v_reward_points, current_date, v_task_level, v_cycle_id);
+  end if;
+
+  update public.users
+  set total_earnings = total_earnings + v_reward_amount,
+      total_points = total_points + v_reward_points,
+      updated_at = now()
+  where id = v_user_id;
+
+  if v_task_level <> 'bronze' then
+    select count(*)
+    into v_total_level_tasks
+    from public.tasks
+    where lower(coalesce(required_level, 'bronze')) = v_task_level;
+
+    select count(*)
+    into v_completed_level_tasks
+    from public.user_tasks
+    where user_id = v_user_id
+      and task_level = v_task_level
+      and level_cycle_id = v_cycle_id;
+
+    v_progress := case
+      when coalesce(v_total_level_tasks, 0) = 0 then 0
+      else least(100, floor((v_completed_level_tasks::numeric * 100) / v_total_level_tasks)::integer)
+    end;
+
+    if v_completed_level_tasks >= v_total_level_tasks and v_total_level_tasks > 0 then
+      update public.level_progress
+      set current_level = 'bronze',
+          active_level_cycle_id = null,
+          progress_percentage = 0,
+          total_tasks_completed = 0,
+          total_artists_engaged = 0,
+          updated_at = now()
+      where user_id = v_user_id;
+    else
+      update public.level_progress
+      set progress_percentage = v_progress,
+          total_tasks_completed = v_completed_level_tasks,
+          total_artists_engaged = v_completed_level_tasks,
+          updated_at = now()
+      where user_id = v_user_id;
+    end if;
+  end if;
+end;
+$$;
+
+revoke execute on function public.purchase_task_level(text) from public;
+grant execute on function public.purchase_task_level(text) to authenticated;
+
+revoke execute on function public.complete_task(uuid) from public;
+grant execute on function public.complete_task(uuid) to authenticated;
