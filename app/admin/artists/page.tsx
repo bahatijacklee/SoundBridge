@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Music, Plus, Loader2, CheckCircle2 } from 'lucide-react'
+import { Music, Plus, Loader2, CheckCircle2, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface Artist {
@@ -30,6 +30,8 @@ export default function AdminArtists() {
   const [isLoading, setIsLoading] = useState(true)
   const [modalMode, setModalMode] = useState<'add' | 'edit' | null>(null)
   const [selectedArtist, setSelectedArtist] = useState<Artist | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   const [form, setForm] = useState<ArtistFormState>({
     name: '',
     genre: '',
@@ -62,6 +64,7 @@ export default function AdminArtists() {
 
   const openAddModal = () => {
     setSelectedArtist(null)
+    setFormError(null)
     setForm({
       name: '',
       genre: '',
@@ -75,6 +78,7 @@ export default function AdminArtists() {
 
   const openEditModal = (artist: Artist) => {
     setSelectedArtist(artist)
+    setFormError(null)
     setForm({
       name: artist.name ?? '',
       genre: artist.genre ?? '',
@@ -89,11 +93,14 @@ export default function AdminArtists() {
   const closeModal = () => {
     setModalMode(null)
     setSelectedArtist(null)
+    setFormError(null)
+    setIsDeleting(false)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
+      setFormError(null)
       const payload: Partial<Artist> = {
         name: form.name.trim(),
         genre: form.genre.trim() ? form.genre.trim() : null,
@@ -131,6 +138,36 @@ export default function AdminArtists() {
       closeModal()
     } catch (error) {
       console.error('Error saving artist:', error)
+      setFormError(error instanceof Error ? error.message : 'Failed to save artist')
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!selectedArtist) return
+
+    const confirmed = window.confirm(`Delete "${selectedArtist.name}"? This action cannot be undone.`)
+    if (!confirmed) return
+
+    try {
+      setIsDeleting(true)
+      setFormError(null)
+
+      const { error } = await supabase.from('artists').delete().eq('id', selectedArtist.id)
+      if (error) throw error
+
+      await fetchArtists()
+      closeModal()
+    } catch (error) {
+      console.error('Error deleting artist:', error)
+      setFormError(
+        error instanceof Error
+          ? error.message.includes('foreign key')
+            ? 'This artist cannot be deleted because tasks are still linked to it.'
+            : error.message
+          : 'Failed to delete artist',
+      )
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -314,7 +351,25 @@ export default function AdminArtists() {
                 </label>
               </div>
 
+              {formError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {formError}
+                </div>
+              ) : null}
+
               <div className="flex gap-3 pt-4">
+                {modalMode === 'edit' && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="border-red-200 text-red-600 hover:bg-red-50"
+                    onClick={handleDelete}
+                    disabled={isDeleting}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    {isDeleting ? 'Deleting...' : 'Delete'}
+                  </Button>
+                )}
                 <Button
                   type="button"
                   variant="outline"

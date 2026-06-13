@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { ListTodo, Loader2, Plus } from 'lucide-react'
+import { ListTodo, Loader2, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface Task {
@@ -40,6 +40,8 @@ export default function AdminTasks() {
   const [isLoading, setIsLoading] = useState(true)
   const [modalMode, setModalMode] = useState<'add' | 'edit' | null>(null)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   const [form, setForm] = useState<TaskFormState>({
     title: '',
     description: '',
@@ -86,6 +88,7 @@ export default function AdminTasks() {
 
   const openAddModal = () => {
     setSelectedTask(null)
+    setFormError(null)
     setForm({
       title: '',
       description: '',
@@ -100,6 +103,7 @@ export default function AdminTasks() {
 
   const openEditModal = (task: Task) => {
     setSelectedTask(task)
+    setFormError(null)
     setForm({
       title: task.title ?? '',
       description: task.description ?? '',
@@ -115,12 +119,15 @@ export default function AdminTasks() {
   const closeModal = () => {
     setModalMode(null)
     setSelectedTask(null)
+    setFormError(null)
+    setIsDeleting(false)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     try {
+      setFormError(null)
       const title = form.title.trim()
       const taskType = form.task_type.trim()
       const rewardAmount = Number(form.reward_amount)
@@ -156,6 +163,36 @@ export default function AdminTasks() {
       closeModal()
     } catch (error) {
       console.error('Error saving task:', error)
+      setFormError(error instanceof Error ? error.message : 'Failed to save task')
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!selectedTask) return
+
+    const confirmed = window.confirm(`Delete "${selectedTask.title}"? This action cannot be undone.`)
+    if (!confirmed) return
+
+    try {
+      setIsDeleting(true)
+      setFormError(null)
+
+      const { error } = await supabase.from('tasks').delete().eq('id', selectedTask.id)
+      if (error) throw error
+
+      await refreshTasks()
+      closeModal()
+    } catch (error) {
+      console.error('Error deleting task:', error)
+      setFormError(
+        error instanceof Error
+          ? error.message.includes('foreign key')
+            ? 'This task cannot be deleted because it is already linked to user task records.'
+            : error.message
+          : 'Failed to delete task',
+      )
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -328,7 +365,25 @@ export default function AdminTasks() {
                 </div>
               </div>
 
+              {formError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {formError}
+                </div>
+              ) : null}
+
               <div className="flex gap-3 pt-4">
+                {modalMode === 'edit' && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="border-red-200 text-red-600 hover:bg-red-50"
+                    onClick={handleDelete}
+                    disabled={isDeleting}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    {isDeleting ? 'Deleting...' : 'Delete'}
+                  </Button>
+                )}
                 <Button type="button" variant="outline" className="flex-1" onClick={closeModal}>
                   Cancel
                 </Button>
