@@ -8,21 +8,23 @@ import {
   CheckSquare,
   Users,
   TrendingUp,
-  Heart,
   Star,
   ArrowRight,
   X,
   Zap,
   Award,
-  Calendar,
+  Lock,
 } from 'lucide-react'
 import Link from 'next/link'
 
+type LevelName = 'bronze' | 'silver' | 'gold' | 'platinum'
+
 interface LevelProgress {
-  current_level: string
+  current_level: LevelName
+  active_level_cycle_id: string | null
+  highest_completed_level: LevelName
   progress_percentage: number
   total_tasks_completed: number
-  total_artists_engaged: number
 }
 
 interface Artist {
@@ -36,14 +38,18 @@ interface Artist {
 interface UserData {
   total_earnings: number
   total_points: number
-  is_vip: boolean
+}
+
+interface LevelPricing {
+  level: LevelName
+  price: number
 }
 
 const LEVEL_CONFIG = {
-  bronze: { reward: 5, color: 'from-amber-600 to-amber-700', next: 'silver', required_artists: 5 },
-  silver: { reward: 15, color: 'from-slate-400 to-slate-500', next: 'gold', required_artists: 5 },
-  gold: { reward: 50, color: 'from-yellow-400 to-yellow-500', next: 'platinum', required_artists: 7 },
-  platinum: { reward: 150, color: 'from-slate-100 to-slate-300', next: null, required_artists: 10 },
+  bronze: { color: 'from-amber-600 to-amber-700', next: 'silver' },
+  silver: { color: 'from-slate-400 to-slate-500', next: 'gold' },
+  gold: { color: 'from-yellow-400 to-yellow-500', next: 'platinum' },
+  platinum: { color: 'from-slate-100 to-slate-300', next: null },
 }
 
 export default function HomePage() {
@@ -53,8 +59,14 @@ export default function HomePage() {
   const [todayEarnings, setTodayEarnings] = useState(0)
   const [todayPoints, setTodayPoints] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [selectedLevel, setSelectedLevel] = useState<string | null>(null)
+  const [selectedLevel, setSelectedLevel] = useState<LevelName | null>(null)
   const [dailyTasksCompleted, setDailyTasksCompleted] = useState(0)
+  const [levelPricing, setLevelPricing] = useState<Record<LevelName, number>>({
+    bronze: 0,
+    silver: 15,
+    gold: 50,
+    platinum: 150,
+  })
   const supabase = createClient()
 
   // Get today's date in YYYY-MM-DD format
@@ -73,7 +85,7 @@ export default function HomePage() {
         // Fetch user data
         const { data: userProfiles } = await supabase
           .from('users')
-          .select('total_earnings, total_points, is_vip')
+          .select('total_earnings, total_points')
           .eq('id', authUser.id)
           .single()
 
@@ -100,12 +112,24 @@ export default function HomePage() {
         // Fetch level progress
         const { data: levelData } = await supabase
           .from('level_progress')
-          .select('*')
+          .select('current_level, active_level_cycle_id, highest_completed_level, progress_percentage, total_tasks_completed')
           .eq('user_id', authUser.id)
-          .single()
+          .maybeSingle()
 
         if (levelData) {
           setLevelProgress(levelData)
+        }
+
+        const { data: pricingData } = await supabase
+          .from('level_pricing')
+          .select('level, price')
+
+        if (pricingData) {
+          const nextPricing = { bronze: 0, silver: 15, gold: 50, platinum: 150 }
+          for (const row of pricingData as LevelPricing[]) {
+            nextPricing[row.level] = Number(row.price)
+          }
+          setLevelPricing(nextPricing)
         }
 
         // Fetch trending artists (top 5 by rating)
@@ -139,8 +163,25 @@ export default function HomePage() {
     )
   }
 
-  const levelConfig = levelProgress ? LEVEL_CONFIG[levelProgress.current_level as keyof typeof LEVEL_CONFIG] : null
-  const nextLevelConfig = levelConfig?.next ? LEVEL_CONFIG[levelConfig.next as keyof typeof LEVEL_CONFIG] : null
+  const levelConfig = levelProgress ? LEVEL_CONFIG[levelProgress.current_level] : null
+  const highestCompletedLevel = levelProgress?.highest_completed_level || 'bronze'
+  const nextLevel =
+    highestCompletedLevel === 'bronze'
+      ? 'silver'
+      : highestCompletedLevel === 'silver'
+        ? 'gold'
+        : 'platinum'
+  const nextUnlockText =
+    highestCompletedLevel === 'platinum'
+      ? 'Platinum can be purchased again'
+      : `Next unlock: ${nextLevel}`
+  const nextUnlockPrice = levelPricing[nextLevel]
+  const levelOrder: Record<LevelName, number> = {
+    bronze: 0,
+    silver: 1,
+    gold: 2,
+    platinum: 3,
+  }
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -152,7 +193,7 @@ export default function HomePage() {
               Welcome back! 👋
             </h2>
             <p className="text-gray-300 text-base md:text-lg font-medium">
-              Let&apos;s earn from music today
+              Track your task progression and unlock the next package
             </p>
           </div>
           <div className="text-right bg-gradient-to-br from-yellow-500 to-amber-600 bg-opacity-15 border-2 border-yellow-300 border-opacity-40 rounded-2xl p-4 md:p-6 backdrop-blur-sm">
@@ -235,13 +276,24 @@ export default function HomePage() {
         {/* Levels Grid */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {Object.entries(LEVEL_CONFIG).map(([level, config]) => {
-            const isActive = levelProgress?.current_level === level
-            const isCompleted = ['bronze', 'silver', 'gold', 'platinum'].indexOf(level) < ['bronze', 'silver', 'gold', 'platinum'].indexOf(levelProgress?.current_level || 'bronze')
+            const typedLevel = level as LevelName
+            const isActive = levelProgress?.current_level === typedLevel
+            const isCompleted =
+              typedLevel !== 'bronze' && levelOrder[highestCompletedLevel] >= levelOrder[typedLevel]
+            const isRepeatable = typedLevel === 'platinum' && highestCompletedLevel === 'platinum'
+            const canUnlockNext =
+              !isActive &&
+              !isCompleted &&
+              (
+                (typedLevel === 'silver' && highestCompletedLevel === 'bronze') ||
+                (typedLevel === 'gold' && highestCompletedLevel === 'silver') ||
+                (typedLevel === 'platinum' && (highestCompletedLevel === 'gold' || highestCompletedLevel === 'platinum'))
+              )
 
             return (
               <div
                 key={level}
-                onClick={() => setSelectedLevel(level)}
+                onClick={() => setSelectedLevel(typedLevel)}
                 className={`border rounded-xl p-6 text-center transition-all cursor-pointer hover:shadow-lg ${
                   isActive
                     ? `border-yellow-400 border-opacity-50 bg-yellow-400 bg-opacity-5 hover:border-yellow-400 hover:border-opacity-70`
@@ -256,12 +308,16 @@ export default function HomePage() {
                   <Star className="w-8 h-8 text-white" />
                 </div>
                 <h4 className="font-bold text-white capitalize mb-2">{level} Level</h4>
-                <p className="text-2xl font-bold text-yellow-400 mb-2">${config.reward.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-yellow-400 mb-2">${levelPricing[typedLevel].toFixed(2)}</p>
                 <p className="text-xs text-gray-400 mb-3">
-                  Like & Follow {config.required_artists} Artists
+                  {typedLevel === 'bronze'
+                    ? 'Free starter tasks'
+                    : typedLevel === 'platinum'
+                      ? 'Repeatable highest package'
+                      : 'One-time progression package'}
                 </p>
 
-                {isActive && (
+                {isActive && typedLevel !== 'bronze' && (
                   <div className="space-y-2">
                     <div className="w-full bg-slate-700 rounded-full h-2">
                       <div
@@ -270,13 +326,29 @@ export default function HomePage() {
                       ></div>
                     </div>
                     <p className="text-xs text-gray-400">
-                      Progress: {levelProgress?.total_artists_engaged || 0}/{config.required_artists}
+                      Progress: {levelProgress?.total_tasks_completed || 0} completed
                     </p>
                   </div>
                 )}
 
                 {isCompleted && (
-                  <p className="text-xs text-green-400 font-semibold">Unlocked ✓</p>
+                  <p className="text-xs text-green-400 font-semibold">
+                    {typedLevel === 'platinum' ? 'Completed, can buy again' : 'Completed permanently'}
+                  </p>
+                )}
+
+                {!isActive && !isCompleted && canUnlockNext && (
+                  <p className="text-xs text-yellow-300 font-semibold">Next available unlock</p>
+                )}
+
+                {!isActive && !isCompleted && !canUnlockNext && typedLevel !== 'bronze' && (
+                  <p className="text-xs text-gray-500 font-semibold">
+                    {typedLevel === 'gold' ? 'Requires Silver completion' : typedLevel === 'platinum' ? 'Requires Gold completion' : 'Locked'}
+                  </p>
+                )}
+
+                {isRepeatable && !isActive && (
+                  <p className="text-xs text-cyan-300 font-semibold">Repeatable</p>
                 )}
               </div>
             )
@@ -334,39 +406,39 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Daily Task Highlights */}
+      {/* Progression Guide */}
       <div className="bg-gradient-to-br from-slate-800 to-slate-700 border border-yellow-400 border-opacity-20 rounded-xl p-6 shadow-lg">
-        <h3 className="text-xl font-bold text-white mb-4">Daily Task Highlights</h3>
+        <h3 className="text-xl font-bold text-white mb-4">Level Progression Guide</h3>
         <div className="space-y-3">
           <div className="flex items-center justify-between p-5 bg-gradient-to-r from-slate-700 to-slate-600 border border-red-400 border-opacity-20 rounded-lg hover:border-red-400 hover:border-opacity-40 transition-all hover:shadow-lg hover:shadow-red-400/10">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-red-500 bg-opacity-20 rounded-lg flex items-center justify-center">
-                <Heart className="w-6 h-6 text-red-400 fill-red-400" />
+                <CheckSquare className="w-6 h-6 text-red-400" />
               </div>
               <div>
-                <p className="font-semibold text-white">Like & Follow Artist</p>
-                <p className="text-xs text-gray-400">Earn by liking & following 5 artists</p>
+                <p className="font-semibold text-white">Bronze Tasks</p>
+                <p className="text-xs text-gray-400">Free on signup and only completed once</p>
               </div>
             </div>
             <div className="text-right">
-              <p className="font-bold text-yellow-400 text-lg">$5.00</p>
-              <p className="text-xs text-gray-400">+50 PTS</p>
+              <p className="font-bold text-yellow-400 text-lg">Free</p>
+              <p className="text-xs text-gray-400">Permanent completion</p>
             </div>
           </div>
 
           <div className="flex items-center justify-between p-5 bg-gradient-to-r from-slate-700 to-slate-600 border border-green-400 border-opacity-20 rounded-lg hover:border-green-400 hover:border-opacity-40 transition-all hover:shadow-lg hover:shadow-green-400/10">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-green-500 bg-opacity-20 rounded-lg flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-green-400" />
+                <Lock className="w-6 h-6 text-green-400" />
               </div>
               <div>
-                <p className="font-semibold text-white">Rate Artist</p>
-                <p className="text-xs text-gray-400">Rate 5 artists you love</p>
+                <p className="font-semibold text-white">Paid Levels</p>
+                <p className="text-xs text-gray-400">Silver and Gold are one-time unlocks, Platinum repeats</p>
               </div>
             </div>
             <div className="text-right">
-              <p className="font-bold text-yellow-400 text-lg">$4.00</p>
-              <p className="text-xs text-gray-400">+40 PTS</p>
+              <p className="font-bold text-yellow-400 text-lg">${nextUnlockPrice.toFixed(2)}</p>
+              <p className="text-xs text-gray-400">{nextUnlockText}</p>
             </div>
           </div>
         </div>
@@ -378,19 +450,25 @@ export default function HomePage() {
         </Link>
       </div>
 
-      {/* Daily Progress */}
+      {/* Progress Snapshot */}
       <div className="bg-gradient-to-br from-slate-800 to-slate-700 border border-yellow-400 border-opacity-20 rounded-xl p-6 shadow-lg">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xl font-bold text-white">Your Daily Progress</h3>
-          <span className="text-yellow-400 font-bold bg-yellow-400 bg-opacity-10 px-3 py-1 rounded-full text-sm">+10 XP</span>
+          <h3 className="text-xl font-bold text-white">Your Progress Snapshot</h3>
+          <span className="text-yellow-400 font-bold bg-yellow-400 bg-opacity-10 px-3 py-1 rounded-full text-sm capitalize">
+            Highest: {highestCompletedLevel}
+          </span>
         </div>
         <div className="w-full bg-slate-700 rounded-full h-4 border border-slate-600">
           <div
             className="bg-gradient-to-r from-yellow-400 to-yellow-500 h-4 rounded-full transition-all shadow-lg shadow-yellow-400/20"
-            style={{ width: '30%' }}
+            style={{ width: `${levelProgress?.current_level === 'bronze' ? 0 : levelProgress?.progress_percentage || 0}%` }}
           ></div>
         </div>
-        <p className="text-sm text-gray-300 mt-3 font-medium">You completed {dailyTasksCompleted}/10 tasks today</p>
+        <p className="text-sm text-gray-300 mt-3 font-medium">
+          {levelProgress?.current_level === 'bronze'
+            ? `You completed ${dailyTasksCompleted} task(s) today and are ready for ${nextUnlockText.toLowerCase()}.`
+            : `You completed ${levelProgress?.total_tasks_completed || 0} task(s) in the active ${levelProgress?.current_level} cycle.`}
+        </p>
       </div>
 
       {/* Level Details Modal */}
@@ -440,23 +518,23 @@ export default function HomePage() {
                       </p>
                     </div>
 
-                    {/* Daily Tasks Completed */}
+                    {/* Today's Tasks Completed */}
                     <div className="bg-slate-800 bg-opacity-50 border border-emerald-500 border-opacity-30 rounded-lg p-4">
                       <div className="flex items-center gap-3 mb-2">
                         <div className="p-2 bg-emerald-500 bg-opacity-10 rounded-lg">
-                          <Calendar className="w-5 h-5 text-emerald-400" />
+                          <CheckSquare className="w-5 h-5 text-emerald-400" />
                         </div>
-                        <span className="text-gray-400 text-sm font-medium">Daily Tasks Completed</span>
+                        <span className="text-gray-400 text-sm font-medium">Tasks Completed Today</span>
                       </div>
                       <p className="text-3xl font-bold text-emerald-400 ml-11">
-                        {dailyTasksCompleted}/3
+                        {dailyTasksCompleted}
                       </p>
                     </div>
                   </div>
 
                   <div className="pt-4 space-y-3">
                     <p className="text-xs text-gray-500 text-center">
-                      Keep completing tasks to progress to the next level!
+                      Bronze remains free forever, but each Bronze task can only be completed once.
                     </p>
                     <button
                       onClick={() => setSelectedLevel(null)}
@@ -467,21 +545,41 @@ export default function HomePage() {
                   </div>
                 </>
               ) : (
-                // Premium Levels: Show Subscription Prompt
+                // Paid Level Details
                 <>
                   <div className="bg-gradient-to-br from-amber-500 from-opacity-10 to-yellow-500 to-opacity-10 border border-yellow-500 border-opacity-30 rounded-lg p-6 text-center space-y-3">
                     <div className="w-12 h-12 bg-yellow-500 bg-opacity-20 rounded-full flex items-center justify-center mx-auto">
                       <Star className="w-6 h-6 text-yellow-400" />
                     </div>
-                    <h4 className="font-bold text-white text-lg">Premium Level</h4>
+                    <h4 className="font-bold text-white text-lg capitalize">{selectedLevel} Package</h4>
                     <p className="text-sm text-gray-300">
-                      This level is available exclusively to VIP members. Upgrade now to unlock premium tasks and earn higher rewards!
+                      {selectedLevel === 'platinum'
+                        ? 'Platinum is the highest package and can be purchased repeatedly after completion.'
+                        : `This package is unlocked through progression and can only be completed once.`}
                     </p>
                   </div>
 
-                  <Link href="/account">
+                  <div className="bg-slate-800 bg-opacity-50 border border-slate-700 rounded-lg p-4 text-sm text-gray-300 space-y-2">
+                    <p>
+                      Price: <span className="font-bold text-yellow-400">${levelPricing[selectedLevel].toFixed(2)}</span>
+                    </p>
+                    <p>
+                      Status:{' '}
+                      <span className="font-semibold text-white capitalize">
+                        {levelProgress?.current_level === selectedLevel
+                          ? 'Active now'
+                          : levelOrder[highestCompletedLevel] >= levelOrder[selectedLevel]
+                            ? selectedLevel === 'platinum'
+                              ? 'Completed and repeatable'
+                              : 'Completed permanently'
+                            : 'Locked'}
+                      </span>
+                    </p>
+                  </div>
+
+                  <Link href="/tasks">
                     <Button className="w-full bg-gradient-to-r from-yellow-400 to-yellow-500 hover:from-yellow-500 hover:to-yellow-600 text-slate-900 font-bold py-2 rounded-lg transition-all">
-                      Upgrade to VIP
+                      Go To Tasks
                     </Button>
                   </Link>
 

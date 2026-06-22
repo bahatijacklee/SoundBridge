@@ -167,17 +167,15 @@ export default function AdminTasks() {
     }
   }
 
-  const handleDelete = async () => {
-    if (!selectedTask) return
-
-    const confirmed = window.confirm(`Delete "${selectedTask.title}"? This action cannot be undone.`)
+  const deleteTask = async (task: Task) => {
+    const confirmed = window.confirm(`Delete "${task.title}"? This action cannot be undone.`)
     if (!confirmed) return
 
     try {
       setIsDeleting(true)
       setFormError(null)
 
-      const { error } = await supabase.from('tasks').delete().eq('id', selectedTask.id)
+      const { error } = await supabase.from('tasks').delete().eq('id', task.id)
       if (error) throw error
 
       await refreshTasks()
@@ -194,6 +192,11 @@ export default function AdminTasks() {
     } finally {
       setIsDeleting(false)
     }
+  }
+
+  const handleDelete = async () => {
+    if (!selectedTask) return
+    await deleteTask(selectedTask)
   }
 
   if (isLoading) {
@@ -242,7 +245,21 @@ export default function AdminTasks() {
               }}
               className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 hover:shadow-md transition-shadow cursor-pointer"
             >
-              <h3 className="text-lg font-semibold text-slate-900 mb-2">{task.title}</h3>
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <h3 className="text-lg font-semibold text-slate-900">{task.title}</h3>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void deleteTask(task)
+                  }}
+                  className="p-2 rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
+                  aria-label={`Delete ${task.title}`}
+                  title="Delete task"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
               <p className="text-sm text-slate-500 mb-4 line-clamp-2">{task.description}</p>
               <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
                 <div className="space-y-1">

@@ -16,17 +16,21 @@ import {
   Star,
 } from 'lucide-react'
 
+type LevelName = 'bronze' | 'silver' | 'gold' | 'platinum'
+
 interface UserData {
   id: string
   username: string
   total_earnings: number
   total_points: number
-  is_vip: boolean
 }
 
 interface LevelProgress {
-  current_level: string
+  current_level: LevelName
+  active_level_cycle_id: string | null
+  highest_completed_level: LevelName
   progress_percentage: number
+  total_tasks_completed: number
 }
 
 interface Transaction {
@@ -45,6 +49,11 @@ interface Wallet {
   is_linked: boolean
 }
 
+interface LevelPricing {
+  level: LevelName
+  price: number
+}
+
 export default function AccountPage() {
   const [userData, setUserData] = useState<UserData | null>(null)
   const [levelProgress, setLevelProgress] = useState<LevelProgress | null>(null)
@@ -58,6 +67,12 @@ export default function AccountPage() {
   const [walletAddressInput, setWalletAddressInput] = useState('')
   const [walletSaving, setWalletSaving] = useState(false)
   const [walletError, setWalletError] = useState('')
+  const [levelPricing, setLevelPricing] = useState<Record<LevelName, number>>({
+    bronze: 0,
+    silver: 15,
+    gold: 50,
+    platinum: 150,
+  })
   const supabase = createClient()
 
   useEffect(() => {
@@ -84,12 +99,24 @@ export default function AccountPage() {
         // Fetch level progress
         const { data: level } = await supabase
           .from('level_progress')
-          .select('*')
+          .select('current_level, active_level_cycle_id, highest_completed_level, progress_percentage, total_tasks_completed')
           .eq('user_id', authUser.id)
           .single()
 
         if (level) {
           setLevelProgress(level)
+        }
+
+        const { data: pricingRows } = await supabase
+          .from('level_pricing')
+          .select('level, price')
+
+        if (pricingRows) {
+          const nextPricing = { bronze: 0, silver: 15, gold: 50, platinum: 150 }
+          for (const row of pricingRows as LevelPricing[]) {
+            nextPricing[row.level] = Number(row.price)
+          }
+          setLevelPricing(nextPricing)
         }
 
         // Fetch transactions
@@ -309,6 +336,32 @@ export default function AccountPage() {
     )
   }
 
+  const highestCompletedLevel = levelProgress?.highest_completed_level || 'bronze'
+  const currentLevel = levelProgress?.current_level || 'bronze'
+  const levelOrder: Record<LevelName, number> = {
+    bronze: 0,
+    silver: 1,
+    gold: 2,
+    platinum: 3,
+  }
+  const nextUnlockLevel: LevelName =
+    highestCompletedLevel === 'bronze'
+      ? 'silver'
+      : highestCompletedLevel === 'silver'
+        ? 'gold'
+        : 'platinum'
+  const nextUnlockPrice = levelPricing[nextUnlockLevel]
+  const nextUnlockLabel =
+    highestCompletedLevel === 'platinum'
+      ? 'Platinum can be purchased again'
+      : `${nextUnlockLevel.charAt(0).toUpperCase()}${nextUnlockLevel.slice(1)} unlock`
+  const progressionBadge =
+    currentLevel !== 'bronze'
+      ? `Active ${currentLevel} cycle`
+      : highestCompletedLevel === 'platinum'
+        ? 'Platinum unlocked'
+        : `Next: ${nextUnlockLevel}`
+
   return (
     <div className="space-y-6 md:space-y-8">
       {/* Header with User Info */}
@@ -325,18 +378,16 @@ export default function AccountPage() {
                 {userData?.username}
               </h2>
               <div className="flex items-center gap-4">
-                {userData?.is_vip && (
-                  <div className="flex items-center gap-1 bg-yellow-400 bg-opacity-20 px-3 py-1 rounded-full border border-yellow-400 border-opacity-50">
-                    <Star className="w-4 h-4 text-yellow-400" />
-                    <span className="text-xs font-bold text-yellow-400">
-                      VIP Member
-                    </span>
-                  </div>
-                )}
+                <div className="flex items-center gap-1 bg-yellow-400 bg-opacity-20 px-3 py-1 rounded-full border border-yellow-400 border-opacity-50">
+                  <Star className="w-4 h-4 text-yellow-400" />
+                  <span className="text-xs font-bold text-yellow-400">
+                    {progressionBadge}
+                  </span>
+                </div>
                 <p className="text-gray-400">
-                  Level:{' '}
+                  Active Level:{' '}
                   <span className="font-bold text-yellow-400 capitalize">
-                    {levelProgress?.current_level}
+                    {currentLevel}
                   </span>
                 </p>
               </div>
@@ -371,12 +422,64 @@ export default function AccountPage() {
 
         <div className="bg-slate-800 border border-gray-700 rounded-xl p-6">
           <div className="flex items-center justify-between mb-4">
-            <p className="text-gray-400 text-sm">Next Level Reward</p>
+            <p className="text-gray-400 text-sm">Next Unlock</p>
             <Star className="w-5 h-5 text-orange-400" />
           </div>
-          <p className="text-4xl font-bold text-orange-400 mb-2">$150.00</p>
-          <p className="text-xs text-gray-500">Platinum Level</p>
+          <p className="text-4xl font-bold text-orange-400 mb-2">${nextUnlockPrice.toFixed(2)}</p>
+          <p className="text-xs text-gray-500">{nextUnlockLabel}</p>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {(['bronze', 'silver', 'gold', 'platinum'] as LevelName[]).map((level) => {
+          const isActive = currentLevel === level
+          const isCompleted = level !== 'bronze' && levelOrder[highestCompletedLevel] >= levelOrder[level]
+          const isRepeatable = level === 'platinum' && highestCompletedLevel === 'platinum'
+
+          return (
+            <div
+              key={level}
+              className={`rounded-xl border p-4 ${
+                isActive
+                  ? 'border-yellow-400 border-opacity-50 bg-yellow-400 bg-opacity-5'
+                  : isCompleted
+                    ? 'border-green-500 border-opacity-30 bg-green-500 bg-opacity-5'
+                    : 'border-gray-700 bg-slate-800'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-lg font-bold text-white capitalize">{level}</p>
+                <span className="text-sm font-semibold text-yellow-400">${levelPricing[level].toFixed(2)}</span>
+              </div>
+              <p className="text-sm text-gray-400">
+                {level === 'bronze'
+                  ? 'Free starter tasks completed once'
+                  : level === 'platinum'
+                    ? 'Highest package, repeatable after completion'
+                    : 'One-time progression package'}
+              </p>
+              <p className="mt-3 text-xs font-semibold">
+                <span
+                  className={
+                    isActive
+                      ? 'text-yellow-300'
+                      : isCompleted
+                        ? 'text-green-400'
+                        : 'text-gray-500'
+                  }
+                >
+                  {isActive
+                    ? `Active cycle: ${levelProgress?.progress_percentage || 0}%`
+                    : isCompleted
+                      ? isRepeatable
+                        ? 'Completed, can unlock again'
+                        : 'Completed permanently'
+                      : 'Locked'}
+                </span>
+              </p>
+            </div>
+          )
+        })}
       </div>
 
       {/* Payment Options */}

@@ -672,6 +672,16 @@ do $$
 begin
   if not exists (
     select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'level_progress' and column_name = 'highest_completed_level'
+  ) then
+    alter table public.level_progress add column highest_completed_level text default 'bronze';
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
     where table_schema = 'public' and table_name = 'user_tasks' and column_name = 'task_level'
   ) then
     alter table public.user_tasks add column task_level text;
@@ -692,6 +702,10 @@ update public.level_progress
 set current_level = 'bronze'
 where current_level is null or btrim(current_level) = '';
 
+update public.level_progress
+set highest_completed_level = 'bronze'
+where highest_completed_level is null or btrim(highest_completed_level) = '';
+
 insert into public.level_progress (user_id, current_level, progress_percentage, total_tasks_completed, total_artists_engaged, updated_at)
 select u.id, 'bronze', 0, 0, 0, now()
 from public.users u
@@ -706,6 +720,59 @@ set task_level = lower(coalesce(t.required_level, 'bronze'))
 from public.tasks t
 where t.id = ut.task_id
   and (ut.task_level is null or btrim(ut.task_level) = '');
+
+with level_totals as (
+  select lower(coalesce(required_level, 'bronze')) as level_name, count(*) as total_tasks
+  from public.tasks
+  where lower(coalesce(required_level, 'bronze')) in ('silver', 'gold', 'platinum')
+  group by 1
+),
+level_completions as (
+  select
+    ut.user_id,
+    lower(coalesce(ut.task_level, 'bronze')) as level_name,
+    count(distinct ut.task_id) as completed_tasks
+  from public.user_tasks ut
+  where lower(coalesce(ut.task_level, 'bronze')) in ('silver', 'gold', 'platinum')
+  group by 1, 2
+),
+highest_per_user as (
+  select
+    lc.user_id,
+    case
+      when exists (
+        select 1
+        from level_completions x
+        join level_totals t on t.level_name = x.level_name
+        where x.user_id = lc.user_id
+          and x.level_name = 'platinum'
+          and x.completed_tasks >= t.total_tasks
+      ) then 'platinum'
+      when exists (
+        select 1
+        from level_completions x
+        join level_totals t on t.level_name = x.level_name
+        where x.user_id = lc.user_id
+          and x.level_name = 'gold'
+          and x.completed_tasks >= t.total_tasks
+      ) then 'gold'
+      when exists (
+        select 1
+        from level_completions x
+        join level_totals t on t.level_name = x.level_name
+        where x.user_id = lc.user_id
+          and x.level_name = 'silver'
+          and x.completed_tasks >= t.total_tasks
+      ) then 'silver'
+      else 'bronze'
+    end as highest_completed_level
+  from level_completions lc
+  group by lc.user_id
+)
+update public.level_progress lp
+set highest_completed_level = h.highest_completed_level
+from highest_per_user h
+where h.user_id = lp.user_id;
 
 do $$
 begin
@@ -796,6 +863,7 @@ declare
   v_price numeric;
   v_balance numeric;
   v_current_level text;
+  v_highest_completed_level text;
   v_level_task_count integer;
   v_cycle_id uuid := gen_random_uuid();
 begin
@@ -820,14 +888,28 @@ begin
   values (auth.uid(), 'bronze', 0, 0, 0, now())
   on conflict (user_id) do nothing;
 
-  select current_level
-  into v_current_level
+  select current_level, highest_completed_level
+  into v_current_level, v_highest_completed_level
   from public.level_progress
   where user_id = auth.uid()
   for update;
 
   if coalesce(v_current_level, 'bronze') <> 'bronze' then
     raise exception 'complete_current_level_first';
+  end if;
+
+  v_highest_completed_level := coalesce(v_highest_completed_level, 'bronze');
+
+  if v_level = 'silver' and v_highest_completed_level <> 'bronze' then
+    raise exception 'silver_already_completed';
+  end if;
+
+  if v_level = 'gold' and v_highest_completed_level <> 'silver' then
+    raise exception 'complete_silver_first';
+  end if;
+
+  if v_level = 'platinum' and v_highest_completed_level not in ('gold', 'platinum') then
+    raise exception 'complete_gold_first';
   end if;
 
   select price
@@ -861,6 +943,7 @@ begin
   update public.level_progress
   set current_level = v_level,
       active_level_cycle_id = v_cycle_id,
+      highest_completed_level = v_highest_completed_level,
       progress_percentage = 0,
       total_tasks_completed = 0,
       total_artists_engaged = 0,
@@ -982,6 +1065,12 @@ begin
       update public.level_progress
       set current_level = 'bronze',
           active_level_cycle_id = null,
+          highest_completed_level = case
+            when v_task_level = 'platinum' then 'platinum'
+            when v_task_level = 'gold' then 'gold'
+            when v_task_level = 'silver' then 'silver'
+            else highest_completed_level
+          end,
           progress_percentage = 0,
           total_tasks_completed = 0,
           total_artists_engaged = 0,
@@ -1004,3 +1093,101 @@ grant execute on function public.purchase_task_level(text) to authenticated;
 
 revoke execute on function public.complete_task(uuid) from public;
 grant execute on function public.complete_task(uuid) to authenticated;
+
+-- 19. Fix admin_users RLS recursion by using a SECURITY DEFINER helper
+create or replace function public.is_admin_user()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    return false;
+  end if;
+
+  return exists (
+    select 1
+    from public.admin_users
+    where user_id = auth.uid()
+  );
+end;
+$$;
+
+revoke execute on function public.is_admin_user() from public;
+grant execute on function public.is_admin_user() to authenticated;
+
+drop policy if exists "Admins can manage admin users" on public.admin_users;
+create policy "Admins can manage admin users"
+on public.admin_users
+for all
+to authenticated
+using (public.is_admin_user())
+with check (public.is_admin_user());
+
+drop policy if exists "Admins can read all withdrawal requests" on public.withdrawal_requests;
+create policy "Admins can read all withdrawal requests"
+on public.withdrawal_requests
+for select
+to authenticated
+using (public.is_admin_user());
+
+drop policy if exists "Admins can update withdrawal requests" on public.withdrawal_requests;
+create policy "Admins can update withdrawal requests"
+on public.withdrawal_requests
+for update
+to authenticated
+using (public.is_admin_user())
+with check (public.is_admin_user());
+
+drop policy if exists "Admins can read all users" on public.users;
+create policy "Admins can read all users"
+on public.users
+for select
+to authenticated
+using (public.is_admin_user());
+
+drop policy if exists "Admins can manage tasks" on public.tasks;
+create policy "Admins can manage tasks"
+on public.tasks
+for all
+to authenticated
+using (public.is_admin_user())
+with check (public.is_admin_user());
+
+drop policy if exists "Admins can read all transactions" on public.transactions;
+create policy "Admins can read all transactions"
+on public.transactions
+for select
+to authenticated
+using (public.is_admin_user());
+
+drop policy if exists "Admins can read all user tasks" on public.user_tasks;
+create policy "Admins can read all user tasks"
+on public.user_tasks
+for select
+to authenticated
+using (public.is_admin_user());
+
+drop policy if exists "Admins can read all level progress" on public.level_progress;
+create policy "Admins can read all level progress"
+on public.level_progress
+for select
+to authenticated
+using (public.is_admin_user());
+
+drop policy if exists "Admins can manage artists" on public.artists;
+create policy "Admins can manage artists"
+on public.artists
+for all
+to authenticated
+using (public.is_admin_user())
+with check (public.is_admin_user());
+
+drop policy if exists "Admins can manage level pricing" on public.level_pricing;
+create policy "Admins can manage level pricing"
+on public.level_pricing
+for all
+to authenticated
+using (public.is_admin_user())
+with check (public.is_admin_user());

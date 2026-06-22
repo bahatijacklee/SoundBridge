@@ -37,6 +37,7 @@ interface UserStats {
 interface LevelProgress {
   current_level: LevelName
   active_level_cycle_id: string | null
+  highest_completed_level: LevelName
   progress_percentage: number
   total_tasks_completed: number
 }
@@ -78,6 +79,7 @@ export default function TasksPage() {
   const [levelProgress, setLevelProgress] = useState<LevelProgress>({
     current_level: 'bronze',
     active_level_cycle_id: null,
+    highest_completed_level: 'bronze',
     progress_percentage: 0,
     total_tasks_completed: 0,
   })
@@ -107,7 +109,7 @@ export default function TasksPage() {
         supabase.from('users').select('total_earnings, total_points').eq('id', authUser.id).single(),
         supabase
           .from('level_progress')
-          .select('current_level, active_level_cycle_id, progress_percentage, total_tasks_completed')
+          .select('current_level, active_level_cycle_id, highest_completed_level, progress_percentage, total_tasks_completed')
           .eq('user_id', authUser.id)
           .maybeSingle(),
         supabase.from('level_pricing').select('level, price'),
@@ -130,6 +132,7 @@ export default function TasksPage() {
         setLevelProgress({
           current_level: 'bronze',
           active_level_cycle_id: null,
+          highest_completed_level: 'bronze',
           progress_percentage: 0,
           total_tasks_completed: 0,
         })
@@ -219,6 +222,27 @@ export default function TasksPage() {
       ? 0
       : Math.max(activeLevelTaskCount - activeLevelCompletedIds.size, 0)
 
+  const highestCompletedLevel = levelProgress.highest_completed_level || 'bronze'
+
+  const isLevelCompletedForever = (level: LevelName) => {
+    if (level === 'bronze') return false
+    const order: Record<LevelName, number> = {
+      bronze: 0,
+      silver: 1,
+      gold: 2,
+      platinum: 3,
+    }
+
+    return order[highestCompletedLevel] >= order[level]
+  }
+
+  const canPurchaseLevel = (level: LevelName) => {
+    if (level === 'bronze' || levelProgress.current_level !== 'bronze') return false
+    if (level === 'silver') return highestCompletedLevel === 'bronze'
+    if (level === 'gold') return highestCompletedLevel === 'silver'
+    return highestCompletedLevel === 'gold' || highestCompletedLevel === 'platinum'
+  }
+
   const sortedTasks = [...normalizedTasks].sort((a, b) => {
     switch (sortBy) {
       case 'reward':
@@ -283,7 +307,7 @@ export default function TasksPage() {
               {levelProgress.current_level}
             </h2>
             <p className="text-sm text-gray-300 mt-2">
-              Bronze tasks are free and can only be completed once. Higher levels unlock only after purchase and return to Bronze once every task in that level is completed.
+              Bronze tasks are free and can only be completed once. Silver and Gold can only be purchased once for progression, while Platinum can be purchased repeatedly after Gold is completed.
             </p>
           </div>
           <div className="bg-slate-900 bg-opacity-60 rounded-xl px-5 py-4">
@@ -300,8 +324,9 @@ export default function TasksPage() {
           const price = levelPricing[level] ?? 0
           const isActive = levelProgress.current_level === level
           const balance = Number(userStats?.total_earnings || 0)
-          const canPurchase = level !== 'bronze' && levelProgress.current_level === 'bronze'
+          const canPurchase = canPurchaseLevel(level)
           const hasEnoughBalance = balance >= price
+          const isCompletedForever = isLevelCompletedForever(level)
 
           return (
             <div
@@ -322,7 +347,9 @@ export default function TasksPage() {
               <p className="text-sm text-gray-400 mb-4">
                 {level === 'bronze'
                   ? 'Free starter tasks that remain completed once claimed.'
-                  : `Unlock all ${level} tasks for one paid cycle.`}
+                  : level === 'platinum'
+                    ? 'Highest level. Can be purchased again after each completed cycle.'
+                    : `Unlock all ${level} tasks once, then progress upward.`}
               </p>
 
               {level === 'bronze' ? (
@@ -332,6 +359,10 @@ export default function TasksPage() {
               ) : isActive ? (
                 <div className="rounded-lg bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-30 px-3 py-2 text-sm text-yellow-300">
                   {remainingActiveLevelTasks} tasks remaining in this cycle
+                </div>
+              ) : isCompletedForever && level !== 'platinum' ? (
+                <div className="rounded-lg bg-green-500 bg-opacity-10 border border-green-500 border-opacity-30 px-3 py-2 text-sm text-green-300">
+                  Completed permanently
                 </div>
               ) : canPurchase ? (
                 <button
@@ -352,7 +383,11 @@ export default function TasksPage() {
                 </button>
               ) : (
                 <div className="rounded-lg bg-slate-700 px-3 py-2 text-sm text-gray-300">
-                  Finish the active level first
+                  {level === 'gold' && highestCompletedLevel === 'bronze'
+                    ? 'Complete Silver first'
+                    : level === 'platinum' && highestCompletedLevel === 'silver'
+                      ? 'Complete Gold first'
+                      : 'Finish the active level first'}
                 </div>
               )}
             </div>

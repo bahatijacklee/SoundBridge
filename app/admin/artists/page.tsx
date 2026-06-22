@@ -142,17 +142,15 @@ export default function AdminArtists() {
     }
   }
 
-  const handleDelete = async () => {
-    if (!selectedArtist) return
-
-    const confirmed = window.confirm(`Delete "${selectedArtist.name}"? This action cannot be undone.`)
+  const deleteArtist = async (artist: Artist) => {
+    const confirmed = window.confirm(`Delete "${artist.name}"? This action cannot be undone.`)
     if (!confirmed) return
 
     try {
       setIsDeleting(true)
       setFormError(null)
 
-      const { error } = await supabase.from('artists').delete().eq('id', selectedArtist.id)
+      const { error } = await supabase.from('artists').delete().eq('id', artist.id)
       if (error) throw error
 
       await fetchArtists()
@@ -169,6 +167,11 @@ export default function AdminArtists() {
     } finally {
       setIsDeleting(false)
     }
+  }
+
+  const handleDelete = async () => {
+    if (!selectedArtist) return
+    await deleteArtist(selectedArtist)
   }
 
   if (isLoading) {
@@ -237,9 +240,23 @@ export default function AdminArtists() {
                     </span>
                   )}
                 </div>
-                {artist.verified && (
-                  <CheckCircle2 className="w-5 h-5 text-blue-500" />
-                )}
+                <div className="flex items-center gap-2">
+                  {artist.verified && (
+                    <CheckCircle2 className="w-5 h-5 text-blue-500" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void deleteArtist(artist)
+                    }}
+                    className="p-2 rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
+                    aria-label={`Delete ${artist.name}`}
+                    title="Delete artist"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
               
               <h3 className="text-lg font-semibold text-slate-900 mb-1">{artist.name}</h3>
