@@ -54,6 +54,33 @@ interface LevelPricing {
   price: number
 }
 
+const getWalletValidationError = (walletType: 'usdt' | 'btc', address: string) => {
+  const trimmed = address.trim()
+  if (!trimmed) return 'Wallet address is required'
+
+  if (walletType === 'usdt') {
+    if (!trimmed.startsWith('T') || trimmed.length < 30) {
+      return 'USDT (TRC20) address should look like a Tron address starting with T'
+    }
+  }
+
+  if (walletType === 'btc') {
+    const lower = trimmed.toLowerCase()
+    const looksLikeBtc = lower.startsWith('bc1') || trimmed.startsWith('1') || trimmed.startsWith('3')
+    if (!looksLikeBtc || trimmed.length < 26) {
+      return 'Bitcoin address should start with 1, 3, or bc1'
+    }
+  }
+
+  return null
+}
+
+const isValidWalletRecord = (wallet: Wallet) => {
+  if (!wallet.is_linked || !wallet.wallet_address) return false
+  if (wallet.wallet_type !== 'usdt' && wallet.wallet_type !== 'btc') return false
+  return !getWalletValidationError(wallet.wallet_type, wallet.wallet_address)
+}
+
 export default function AccountPage() {
   const [userData, setUserData] = useState<UserData | null>(null)
   const [levelProgress, setLevelProgress] = useState<LevelProgress | null>(null)
@@ -181,29 +208,10 @@ export default function AccountPage() {
     }
   }
 
-  const validateWalletAddress = (walletType: 'usdt' | 'btc', address: string) => {
-    const trimmed = address.trim()
-    if (!trimmed) return 'Wallet address is required'
-
-    if (walletType === 'usdt') {
-      if (!trimmed.startsWith('T') || trimmed.length < 30) {
-        return 'USDT (TRC20) address should look like a Tron address starting with T'
-      }
-    }
-
-    if (walletType === 'btc') {
-      const lower = trimmed.toLowerCase()
-      const looksLikeBtc = lower.startsWith('bc1') || trimmed.startsWith('1') || trimmed.startsWith('3')
-      if (!looksLikeBtc || trimmed.length < 26) {
-        return 'Bitcoin address should start with 1, 3, or bc1'
-      }
-    }
-
-    return null
-  }
-
   const openWalletEditor = (walletType: 'usdt' | 'btc') => {
-    const existingWallet = wallets.find((w) => w.wallet_type === walletType)
+    const existingWallet = wallets.find(
+      (w) => w.wallet_type === walletType && isValidWalletRecord(w),
+    )
     setWalletModalType(walletType)
     setWalletAddressInput(existingWallet?.wallet_address || '')
     setWalletError('')
@@ -218,7 +226,7 @@ export default function AccountPage() {
 
       if (!walletModalType) return
 
-      const validationError = validateWalletAddress(walletModalType, walletAddressInput)
+      const validationError = getWalletValidationError(walletModalType, walletAddressInput)
       if (validationError) {
         setWalletError(validationError)
         return
@@ -294,8 +302,10 @@ export default function AccountPage() {
       }
 
       // Get selected wallet
-      const wallet = wallets.find(w => w.wallet_type === walletType)
-      if (!wallet) throw new Error('Wallet not found')
+      const wallet = wallets.find(
+        (w) => w.wallet_type === walletType && isValidWalletRecord(w),
+      )
+      if (!wallet) throw new Error('Please add a valid wallet address first')
 
       // Create withdrawal request
       const { error } = await supabase.from('withdrawal_requests').insert([
@@ -338,6 +348,9 @@ export default function AccountPage() {
 
   const highestCompletedLevel = levelProgress?.highest_completed_level || 'bronze'
   const currentLevel = levelProgress?.current_level || 'bronze'
+  const validWallets = wallets.filter(isValidWalletRecord)
+  const hasWalletAccess = validWallets.length > 0
+  const hasInvalidWalletRows = wallets.some((wallet) => !isValidWalletRecord(wallet))
   const levelOrder: Record<LevelName, number> = {
     bronze: 0,
     silver: 1,
@@ -493,20 +506,36 @@ export default function AccountPage() {
         </button>
 
         <button
-          onClick={() => setShowWithdrawModal(true)}
-          className="h-16 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-bold hover:from-blue-500 hover:to-blue-600 rounded-xl flex items-center justify-center gap-2 transition-all hover:shadow-lg hover:shadow-blue-600/30"
+          onClick={() => {
+            if (!hasWalletAccess) return
+            setShowWithdrawModal(true)
+          }}
+          disabled={!hasWalletAccess}
+          className="h-16 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-bold hover:from-blue-500 hover:to-blue-600 rounded-xl flex items-center justify-center gap-2 transition-all hover:shadow-lg hover:shadow-blue-600/30 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <ArrowUpLeft className="w-5 h-5" />
           Withdraw
         </button>
       </div>
 
+      {!hasWalletAccess && (
+        <div className="rounded-xl border border-yellow-500 border-opacity-30 bg-yellow-500 bg-opacity-5 px-4 py-3 text-sm text-yellow-200">
+          Add at least one valid BTC or USDT wallet address before you can request a withdrawal.
+        </div>
+      )}
+
+      {hasInvalidWalletRows && (
+        <div className="rounded-xl border border-amber-500 border-opacity-30 bg-amber-500 bg-opacity-5 px-4 py-3 text-sm text-amber-200">
+          Placeholder or invalid wallet data was hidden. Add your real wallet addresses below to continue.
+        </div>
+      )}
+
       {/* Linked Wallets */}
       <div className="space-y-4">
         <h3 className="text-2xl font-bold text-white">Linked Wallets</h3>
         <div className="space-y-3">
           {['usdt', 'btc'].map((walletType, idx) => {
-            const linkedWallet = wallets.find((w) => w.wallet_type === walletType)
+            const linkedWallet = validWallets.find((w) => w.wallet_type === walletType)
             const isLinked = linkedWallet?.is_linked
 
             return (
@@ -658,6 +687,7 @@ export default function AccountPage() {
         isOpen={showDepositModal}
         onClose={() => setShowDepositModal(false)}
         type="deposit"
+        wallets={validWallets}
       />
 
       <TransactionModal
@@ -665,7 +695,7 @@ export default function AccountPage() {
         onClose={() => setShowWithdrawModal(false)}
         type="withdraw"
         onSubmit={handleWithdraw}
-        wallets={wallets.filter((w) => w.is_linked && !!w.wallet_address)}
+        wallets={validWallets}
       />
 
       {showWalletModal && walletModalType && (
