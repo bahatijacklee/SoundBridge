@@ -682,6 +682,36 @@ do $$
 begin
   if not exists (
     select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'level_progress' and column_name = 'silver_cycles_completed'
+  ) then
+    alter table public.level_progress add column silver_cycles_completed integer not null default 0;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'level_progress' and column_name = 'gold_cycles_completed'
+  ) then
+    alter table public.level_progress add column gold_cycles_completed integer not null default 0;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'level_progress' and column_name = 'platinum_cycles_completed'
+  ) then
+    alter table public.level_progress add column platinum_cycles_completed integer not null default 0;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
     where table_schema = 'public' and table_name = 'user_tasks' and column_name = 'task_level'
   ) then
     alter table public.user_tasks add column task_level text;
@@ -705,6 +735,18 @@ where current_level is null or btrim(current_level) = '';
 update public.level_progress
 set highest_completed_level = 'bronze'
 where highest_completed_level is null or btrim(highest_completed_level) = '';
+
+update public.level_progress
+set silver_cycles_completed = 0
+where silver_cycles_completed is null;
+
+update public.level_progress
+set gold_cycles_completed = 0
+where gold_cycles_completed is null;
+
+update public.level_progress
+set platinum_cycles_completed = 0
+where platinum_cycles_completed is null;
 
 insert into public.level_progress (user_id, current_level, progress_percentage, total_tasks_completed, total_artists_engaged, updated_at)
 select u.id, 'bronze', 0, 0, 0, now()
@@ -773,6 +815,37 @@ update public.level_progress lp
 set highest_completed_level = h.highest_completed_level
 from highest_per_user h
 where h.user_id = lp.user_id;
+
+with cycle_counts as (
+  select
+    user_id,
+    count(distinct level_cycle_id) filter (
+      where lower(coalesce(task_level, 'bronze')) = 'silver'
+        and level_cycle_id is not null
+    ) as silver_cycles_completed,
+    count(distinct level_cycle_id) filter (
+      where lower(coalesce(task_level, 'bronze')) = 'gold'
+        and level_cycle_id is not null
+    ) as gold_cycles_completed,
+    count(distinct level_cycle_id) filter (
+      where lower(coalesce(task_level, 'bronze')) = 'platinum'
+        and level_cycle_id is not null
+    ) as platinum_cycles_completed
+  from public.user_tasks
+  group by user_id
+)
+update public.level_progress lp
+set silver_cycles_completed = coalesce(c.silver_cycles_completed, 0),
+    gold_cycles_completed = coalesce(c.gold_cycles_completed, 0),
+    platinum_cycles_completed = coalesce(c.platinum_cycles_completed, 0),
+    highest_completed_level = case
+      when coalesce(c.platinum_cycles_completed, 0) > 0 or coalesce(c.gold_cycles_completed, 0) >= 2 then 'platinum'
+      when coalesce(c.gold_cycles_completed, 0) > 0 then 'gold'
+      when coalesce(c.silver_cycles_completed, 0) > 0 then 'silver'
+      else 'bronze'
+    end
+from cycle_counts c
+where c.user_id = lp.user_id;
 
 do $$
 begin
@@ -864,6 +937,9 @@ declare
   v_balance numeric;
   v_current_level text;
   v_highest_completed_level text;
+  v_silver_cycles_completed integer;
+  v_gold_cycles_completed integer;
+  v_platinum_cycles_completed integer;
   v_level_task_count integer;
   v_cycle_id uuid := gen_random_uuid();
 begin
@@ -888,8 +964,8 @@ begin
   values (auth.uid(), 'bronze', 0, 0, 0, now())
   on conflict (user_id) do nothing;
 
-  select current_level, highest_completed_level
-  into v_current_level, v_highest_completed_level
+  select current_level, highest_completed_level, silver_cycles_completed, gold_cycles_completed, platinum_cycles_completed
+  into v_current_level, v_highest_completed_level, v_silver_cycles_completed, v_gold_cycles_completed, v_platinum_cycles_completed
   from public.level_progress
   where user_id = auth.uid()
   for update;
@@ -899,17 +975,24 @@ begin
   end if;
 
   v_highest_completed_level := coalesce(v_highest_completed_level, 'bronze');
+  v_silver_cycles_completed := coalesce(v_silver_cycles_completed, 0);
+  v_gold_cycles_completed := coalesce(v_gold_cycles_completed, 0);
+  v_platinum_cycles_completed := coalesce(v_platinum_cycles_completed, 0);
 
-  if v_level = 'silver' and v_highest_completed_level <> 'bronze' then
-    raise exception 'silver_already_completed';
+  if v_level = 'silver' and v_silver_cycles_completed >= 3 then
+    raise exception 'silver_purchase_limit_reached';
   end if;
 
-  if v_level = 'gold' and v_highest_completed_level <> 'silver' then
-    raise exception 'complete_silver_first';
+  if v_level = 'gold' and v_silver_cycles_completed < 3 then
+    raise exception 'complete_silver_three_times_first';
   end if;
 
-  if v_level = 'platinum' and v_highest_completed_level not in ('gold', 'platinum') then
-    raise exception 'complete_gold_first';
+  if v_level = 'gold' and v_gold_cycles_completed >= 2 then
+    raise exception 'gold_purchase_limit_reached';
+  end if;
+
+  if v_level = 'platinum' and v_gold_cycles_completed < 2 then
+    raise exception 'complete_gold_two_times_first';
   end if;
 
   select price
@@ -944,6 +1027,9 @@ begin
   set current_level = v_level,
       active_level_cycle_id = v_cycle_id,
       highest_completed_level = v_highest_completed_level,
+      silver_cycles_completed = v_silver_cycles_completed,
+      gold_cycles_completed = v_gold_cycles_completed,
+      platinum_cycles_completed = v_platinum_cycles_completed,
       progress_percentage = 0,
       total_tasks_completed = 0,
       total_artists_engaged = 0,
@@ -1066,11 +1152,14 @@ begin
       set current_level = 'bronze',
           active_level_cycle_id = null,
           highest_completed_level = case
-            when v_task_level = 'platinum' then 'platinum'
-            when v_task_level = 'gold' then 'gold'
-            when v_task_level = 'silver' then 'silver'
+            when v_task_level = 'platinum' or platinum_cycles_completed + case when v_task_level = 'platinum' then 1 else 0 end > 0 then 'platinum'
+            when v_task_level = 'gold' or gold_cycles_completed + case when v_task_level = 'gold' then 1 else 0 end > 0 then 'gold'
+            when v_task_level = 'silver' or silver_cycles_completed + case when v_task_level = 'silver' then 1 else 0 end > 0 then 'silver'
             else highest_completed_level
           end,
+          silver_cycles_completed = silver_cycles_completed + case when v_task_level = 'silver' then 1 else 0 end,
+          gold_cycles_completed = gold_cycles_completed + case when v_task_level = 'gold' then 1 else 0 end,
+          platinum_cycles_completed = platinum_cycles_completed + case when v_task_level = 'platinum' then 1 else 0 end,
           progress_percentage = 0,
           total_tasks_completed = 0,
           total_artists_engaged = 0,

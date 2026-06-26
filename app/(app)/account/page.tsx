@@ -29,6 +29,9 @@ interface LevelProgress {
   current_level: LevelName
   active_level_cycle_id: string | null
   highest_completed_level: LevelName
+  silver_cycles_completed: number
+  gold_cycles_completed: number
+  platinum_cycles_completed: number
   progress_percentage: number
   total_tasks_completed: number
 }
@@ -126,7 +129,7 @@ export default function AccountPage() {
         // Fetch level progress
         const { data: level } = await supabase
           .from('level_progress')
-          .select('current_level, active_level_cycle_id, highest_completed_level, progress_percentage, total_tasks_completed')
+          .select('current_level, active_level_cycle_id, highest_completed_level, silver_cycles_completed, gold_cycles_completed, platinum_cycles_completed, progress_percentage, total_tasks_completed')
           .eq('user_id', authUser.id)
           .single()
 
@@ -346,8 +349,10 @@ export default function AccountPage() {
     )
   }
 
-  const highestCompletedLevel = levelProgress?.highest_completed_level || 'bronze'
   const currentLevel = levelProgress?.current_level || 'bronze'
+  const silverCyclesCompleted = levelProgress?.silver_cycles_completed || 0
+  const goldCyclesCompleted = levelProgress?.gold_cycles_completed || 0
+  const platinumCyclesCompleted = levelProgress?.platinum_cycles_completed || 0
   const validWallets = wallets.filter(isValidWalletRecord)
   const hasWalletAccess = validWallets.length > 0
   const hasInvalidWalletRows = wallets.some((wallet) => !isValidWalletRecord(wallet))
@@ -358,20 +363,22 @@ export default function AccountPage() {
     platinum: 3,
   }
   const nextUnlockLevel: LevelName =
-    highestCompletedLevel === 'bronze'
+    silverCyclesCompleted < 3
       ? 'silver'
-      : highestCompletedLevel === 'silver'
+      : goldCyclesCompleted < 2
         ? 'gold'
         : 'platinum'
   const nextUnlockPrice = levelPricing[nextUnlockLevel]
   const nextUnlockLabel =
-    highestCompletedLevel === 'platinum'
+    goldCyclesCompleted >= 2
       ? 'Platinum can be purchased again'
-      : `${nextUnlockLevel.charAt(0).toUpperCase()}${nextUnlockLevel.slice(1)} unlock`
+      : nextUnlockLevel === 'silver'
+        ? `Silver unlock (${silverCyclesCompleted}/3)`
+        : `Gold unlock (${goldCyclesCompleted}/2)`
   const progressionBadge =
     currentLevel !== 'bronze'
       ? `Active ${currentLevel} cycle`
-      : highestCompletedLevel === 'platinum'
+      : goldCyclesCompleted >= 2
         ? 'Platinum unlocked'
         : `Next: ${nextUnlockLevel}`
 
@@ -446,8 +453,23 @@ export default function AccountPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {(['bronze', 'silver', 'gold', 'platinum'] as LevelName[]).map((level) => {
           const isActive = currentLevel === level
-          const isCompleted = level !== 'bronze' && levelOrder[highestCompletedLevel] >= levelOrder[level]
-          const isRepeatable = level === 'platinum' && highestCompletedLevel === 'platinum'
+          const completedCycles =
+            level === 'silver'
+              ? silverCyclesCompleted
+              : level === 'gold'
+                ? goldCyclesCompleted
+                : level === 'platinum'
+                  ? platinumCyclesCompleted
+                  : 0
+          const isCompleted =
+            level === 'silver'
+              ? silverCyclesCompleted >= 3
+              : level === 'gold'
+                ? goldCyclesCompleted >= 2
+                : level === 'platinum'
+                  ? platinumCyclesCompleted > 0
+                  : false
+          const isRepeatable = level === 'platinum' && goldCyclesCompleted >= 2
 
           return (
             <div
@@ -469,7 +491,9 @@ export default function AccountPage() {
                   ? 'Free starter tasks completed once'
                   : level === 'platinum'
                     ? 'Highest package, repeatable after completion'
-                    : 'One-time progression package'}
+                    : level === 'silver'
+                      ? '3-cycle progression package'
+                      : '2-cycle progression package'}
               </p>
               <p className="mt-3 text-xs font-semibold">
                 <span
@@ -486,7 +510,7 @@ export default function AccountPage() {
                     : isCompleted
                       ? isRepeatable
                         ? 'Completed, can unlock again'
-                        : 'Completed permanently'
+                        : `${completedCycles}/${level === 'silver' ? 3 : 2} cycles completed`
                       : 'Locked'}
                 </span>
               </p>

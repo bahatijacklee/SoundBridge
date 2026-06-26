@@ -23,6 +23,9 @@ interface LevelProgress {
   current_level: LevelName
   active_level_cycle_id: string | null
   highest_completed_level: LevelName
+  silver_cycles_completed: number
+  gold_cycles_completed: number
+  platinum_cycles_completed: number
   progress_percentage: number
   total_tasks_completed: number
 }
@@ -112,7 +115,7 @@ export default function HomePage() {
         // Fetch level progress
         const { data: levelData } = await supabase
           .from('level_progress')
-          .select('current_level, active_level_cycle_id, highest_completed_level, progress_percentage, total_tasks_completed')
+          .select('current_level, active_level_cycle_id, highest_completed_level, silver_cycles_completed, gold_cycles_completed, platinum_cycles_completed, progress_percentage, total_tasks_completed')
           .eq('user_id', authUser.id)
           .maybeSingle()
 
@@ -164,17 +167,21 @@ export default function HomePage() {
   }
 
   const levelConfig = levelProgress ? LEVEL_CONFIG[levelProgress.current_level] : null
-  const highestCompletedLevel = levelProgress?.highest_completed_level || 'bronze'
+  const silverCyclesCompleted = levelProgress?.silver_cycles_completed || 0
+  const goldCyclesCompleted = levelProgress?.gold_cycles_completed || 0
+  const platinumCyclesCompleted = levelProgress?.platinum_cycles_completed || 0
   const nextLevel =
-    highestCompletedLevel === 'bronze'
+    silverCyclesCompleted < 3
       ? 'silver'
-      : highestCompletedLevel === 'silver'
+      : goldCyclesCompleted < 2
         ? 'gold'
         : 'platinum'
   const nextUnlockText =
-    highestCompletedLevel === 'platinum'
+    goldCyclesCompleted >= 2
       ? 'Platinum can be purchased again'
-      : `Next unlock: ${nextLevel}`
+      : nextLevel === 'silver'
+        ? `Next unlock: Silver (${silverCyclesCompleted}/3)`
+        : `Next unlock: Gold (${goldCyclesCompleted}/2)`
   const nextUnlockPrice = levelPricing[nextLevel]
   const levelOrder: Record<LevelName, number> = {
     bronze: 0,
@@ -278,16 +285,32 @@ export default function HomePage() {
           {Object.entries(LEVEL_CONFIG).map(([level, config]) => {
             const typedLevel = level as LevelName
             const isActive = levelProgress?.current_level === typedLevel
+            const completedCycles =
+              typedLevel === 'silver'
+                ? silverCyclesCompleted
+                : typedLevel === 'gold'
+                  ? goldCyclesCompleted
+                  : typedLevel === 'platinum'
+                    ? platinumCyclesCompleted
+                    : dailyTasksCompleted > 0
+                      ? 1
+                      : 0
             const isCompleted =
-              typedLevel !== 'bronze' && levelOrder[highestCompletedLevel] >= levelOrder[typedLevel]
-            const isRepeatable = typedLevel === 'platinum' && highestCompletedLevel === 'platinum'
+              typedLevel === 'silver'
+                ? silverCyclesCompleted >= 3
+                : typedLevel === 'gold'
+                  ? goldCyclesCompleted >= 2
+                  : typedLevel === 'platinum'
+                    ? platinumCyclesCompleted > 0
+                    : false
+            const isRepeatable = typedLevel === 'platinum' && goldCyclesCompleted >= 2
             const canUnlockNext =
               !isActive &&
               !isCompleted &&
               (
-                (typedLevel === 'silver' && highestCompletedLevel === 'bronze') ||
-                (typedLevel === 'gold' && highestCompletedLevel === 'silver') ||
-                (typedLevel === 'platinum' && (highestCompletedLevel === 'gold' || highestCompletedLevel === 'platinum'))
+                (typedLevel === 'silver' && silverCyclesCompleted < 3) ||
+                (typedLevel === 'gold' && silverCyclesCompleted >= 3 && goldCyclesCompleted < 2) ||
+                (typedLevel === 'platinum' && goldCyclesCompleted >= 2)
               )
 
             return (
@@ -314,7 +337,9 @@ export default function HomePage() {
                     ? 'Free starter tasks'
                     : typedLevel === 'platinum'
                       ? 'Repeatable highest package'
-                      : 'One-time progression package'}
+                      : typedLevel === 'silver'
+                        ? '3-cycle progression package'
+                        : '2-cycle progression package'}
                 </p>
 
                 {isActive && typedLevel !== 'bronze' && (
@@ -333,7 +358,7 @@ export default function HomePage() {
 
                 {isCompleted && (
                   <p className="text-xs text-green-400 font-semibold">
-                    {typedLevel === 'platinum' ? 'Completed, can buy again' : 'Completed permanently'}
+                    {typedLevel === 'platinum' ? 'Completed, can buy again' : `${completedCycles}/${typedLevel === 'silver' ? 3 : 2} cycles completed`}
                   </p>
                 )}
 
@@ -343,7 +368,7 @@ export default function HomePage() {
 
                 {!isActive && !isCompleted && !canUnlockNext && typedLevel !== 'bronze' && (
                   <p className="text-xs text-gray-500 font-semibold">
-                    {typedLevel === 'gold' ? 'Requires Silver completion' : typedLevel === 'platinum' ? 'Requires Gold completion' : 'Locked'}
+                    {typedLevel === 'gold' ? `Requires Silver x3 (${silverCyclesCompleted}/3)` : typedLevel === 'platinum' ? `Requires Gold x2 (${goldCyclesCompleted}/2)` : 'Locked'}
                   </p>
                 )}
 
@@ -433,7 +458,7 @@ export default function HomePage() {
               </div>
               <div>
                 <p className="font-semibold text-white">Paid Levels</p>
-                <p className="text-xs text-gray-400">Silver and Gold are one-time unlocks, Platinum repeats</p>
+                <p className="text-xs text-gray-400">Silver runs 3 cycles, Gold runs 2 cycles, Platinum repeats</p>
               </div>
             </div>
             <div className="text-right">
@@ -455,7 +480,7 @@ export default function HomePage() {
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-xl font-bold text-white">Your Progress Snapshot</h3>
           <span className="text-yellow-400 font-bold bg-yellow-400 bg-opacity-10 px-3 py-1 rounded-full text-sm capitalize">
-            Highest: {highestCompletedLevel}
+            Silver {silverCyclesCompleted}/3, Gold {goldCyclesCompleted}/2
           </span>
         </div>
         <div className="w-full bg-slate-700 rounded-full h-4 border border-slate-600">
