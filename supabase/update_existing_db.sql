@@ -738,6 +738,37 @@ begin
   end if;
 end $$;
 
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.table_constraints
+    where table_schema = 'public'
+      and table_name = 'user_tasks'
+      and constraint_name = 'user_tasks_user_task_date_unique'
+  ) then
+    alter table public.user_tasks
+      drop constraint user_tasks_user_task_date_unique;
+  end if;
+end $$;
+
+drop index if exists public.user_tasks_user_task_date_unique;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_indexes
+    where schemaname = 'public'
+      and tablename = 'user_tasks'
+      and indexname = 'idx_user_tasks_paid_cycle_unique'
+  ) then
+    create unique index idx_user_tasks_paid_cycle_unique
+      on public.user_tasks(user_id, task_id, level_cycle_id)
+      where level_cycle_id is not null;
+  end if;
+end $$;
+
 update public.level_progress
 set current_level = 'bronze'
 where current_level is null or btrim(current_level) = '';
