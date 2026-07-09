@@ -337,6 +337,7 @@ export default function TasksPage() {
           const price = levelPricing[level] ?? 0
           const isActive = levelProgress.current_level === level
           const isUnlockedForTasks = levelProgress.active_paid_level === level
+          const isHighlighted = isActive || isUnlockedForTasks
           const balance = Number(userStats?.total_earnings || 0)
           const canPurchase = canPurchaseLevel(level)
           const hasEnoughBalance = balance >= price
@@ -348,8 +349,8 @@ export default function TasksPage() {
             <div
               key={level}
               className={`rounded-xl border p-5 ${
-                isActive
-                  ? 'border-yellow-400 border-opacity-60 bg-yellow-500 bg-opacity-5'
+                isHighlighted
+                  ? 'border-yellow-400 border-opacity-70 bg-yellow-400'
                   : 'border-gray-700 bg-slate-800'
               }`}
             >
@@ -357,10 +358,10 @@ export default function TasksPage() {
                 <DollarSign className="w-6 h-6 text-white" />
               </div>
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-lg font-bold text-white capitalize">{level}</h3>
-                <span className="text-yellow-400 font-bold">${price.toFixed(2)}</span>
+                <h3 className={`text-lg font-bold capitalize ${isHighlighted ? 'text-slate-950' : 'text-white'}`}>{level}</h3>
+                <span className={`font-bold ${isHighlighted ? 'text-slate-950' : 'text-yellow-400'}`}>${price.toFixed(2)}</span>
               </div>
-              <p className="text-sm text-gray-400 mb-4">
+              <p className={`text-sm mb-4 ${isHighlighted ? 'text-slate-800' : 'text-gray-400'}`}>
                 {level === 'bronze'
                   ? 'Start here'
                   : isUnlockedForTasks
@@ -377,7 +378,7 @@ export default function TasksPage() {
                   Always available
                 </div>
               ) : isUnlockedForTasks ? (
-                <div className="rounded-lg bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-30 px-3 py-2 text-sm text-yellow-300">
+                <div className="rounded-lg bg-slate-900 bg-opacity-15 border border-slate-900 border-opacity-20 px-3 py-2 text-sm text-white font-medium">
                   Tasks unlocked
                 </div>
               ) : hasReachedLimit ? (
