@@ -1,26 +1,28 @@
 # SoundBridge
 
-SoundBridge is a music engagement platform built with Next.js and Supabase. It combines user authentication, artist engagement tasks, level-based task progression, wallet management, deposits and withdrawals, and a separate admin dashboard for platform operations.
+[![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org/)
+[![React](https://img.shields.io/badge/React-19-20232a?logo=react)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Supabase](https://img.shields.io/badge/Supabase-Auth%20%26%20Postgres-3ecf8e?logo=supabase&logoColor=white)](https://supabase.com/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-06b6d4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![License](https://img.shields.io/badge/Status-Active%20Development-facc15)](#)
 
-## Overview
+SoundBridge is a modern music engagement and rewards platform that connects users to artists through structured tasks, progression-based levels, wallet-powered transactions, and a fully separated admin operations dashboard.
 
-The platform allows users to:
+## Product Intro
 
-- sign up and manage their account
-- complete artist engagement tasks
-- progress through task levels from Bronze to Platinum
-- unlock paid task levels using account balance
-- manage crypto wallet addresses for withdrawals
-- submit withdrawal requests for admin review
+SoundBridge is designed as a dual-surface platform:
 
-The platform also includes an admin area for:
+- `User experience`: discover artists, complete engagement tasks, progress through Bronze to Platinum levels, manage wallets, and submit withdrawals.
+- `Admin experience`: manage users, artists, tasks, deposits, withdrawals, and level pricing from a dedicated dashboard.
+- `Platform logic`: enforce progression, balance updates, admin approvals, and secure task completion through Supabase Auth, Postgres, RPC functions, and RLS.
 
-- viewing users and user details
-- managing artists
-- creating, editing, and deleting tasks
-- approving or rejecting withdrawals
-- crediting user balances through deposits
-- managing task level pricing
+### Highlights
+
+- `🎵 Artist Engagement`: users complete actions tied to artists and earn rewards.
+- `📈 Level Progression`: Bronze is free, Silver and Gold are cycle-limited, Platinum is repeatable.
+- `💳 Wallet & Balance Flows`: deposits, withdrawals, wallet linking, and admin-controlled balance actions.
+- `🛠 Admin Operations`: separate admin login, management tools, approvals, pricing controls, and responsive admin UI.
 
 ## Core Features
 
