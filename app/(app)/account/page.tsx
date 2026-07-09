@@ -27,6 +27,7 @@ interface UserData {
 
 interface LevelProgress {
   current_level: LevelName
+  active_paid_level: LevelName | null
   active_level_cycle_id: string | null
   highest_completed_level: LevelName
   silver_cycles_completed: number
@@ -129,7 +130,7 @@ export default function AccountPage() {
         // Fetch level progress
         const { data: level } = await supabase
           .from('level_progress')
-          .select('current_level, active_level_cycle_id, highest_completed_level, silver_cycles_completed, gold_cycles_completed, platinum_cycles_completed, progress_percentage, total_tasks_completed')
+          .select('current_level, active_paid_level, active_level_cycle_id, highest_completed_level, silver_cycles_completed, gold_cycles_completed, platinum_cycles_completed, progress_percentage, total_tasks_completed')
           .eq('user_id', authUser.id)
           .single()
 
@@ -376,8 +377,10 @@ export default function AccountPage() {
         ? `Silver unlock (${silverCyclesCompleted}/3)`
         : `Gold unlock (${goldCyclesCompleted}/2)`
   const progressionBadge =
-    currentLevel !== 'bronze'
-      ? `Active ${currentLevel} cycle`
+    levelProgress?.active_paid_level
+      ? `${levelProgress.active_paid_level} tasks unlocked`
+      : currentLevel !== 'bronze'
+        ? `${currentLevel} level`
       : goldCyclesCompleted >= 2
         ? 'Platinum unlocked'
         : `Next: ${nextUnlockLevel}`
@@ -453,6 +456,7 @@ export default function AccountPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {(['bronze', 'silver', 'gold', 'platinum'] as LevelName[]).map((level) => {
           const isActive = currentLevel === level
+          const isUnlocked = levelProgress?.active_paid_level === level
           const completedCycles =
             level === 'silver'
               ? silverCyclesCompleted
@@ -506,7 +510,9 @@ export default function AccountPage() {
                   }
                 >
                   {isActive
-                    ? `Active cycle: ${levelProgress?.progress_percentage || 0}%`
+                    ? isUnlocked
+                      ? `Tasks unlocked: ${levelProgress?.progress_percentage || 0}%`
+                      : 'Current level'
                     : isCompleted
                       ? isRepeatable
                         ? 'Completed, can unlock again'

@@ -672,6 +672,16 @@ do $$
 begin
   if not exists (
     select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'level_progress' and column_name = 'active_paid_level'
+  ) then
+    alter table public.level_progress add column active_paid_level text;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
     where table_schema = 'public' and table_name = 'level_progress' and column_name = 'highest_completed_level'
   ) then
     alter table public.level_progress add column highest_completed_level text default 'bronze';
@@ -733,6 +743,10 @@ set current_level = 'bronze'
 where current_level is null or btrim(current_level) = '';
 
 update public.level_progress
+set active_paid_level = null
+where active_paid_level is not null and btrim(active_paid_level) = '';
+
+update public.level_progress
 set highest_completed_level = 'bronze'
 where highest_completed_level is null or btrim(highest_completed_level) = '';
 
@@ -747,6 +761,25 @@ where gold_cycles_completed is null;
 update public.level_progress
 set platinum_cycles_completed = 0
 where platinum_cycles_completed is null;
+
+with bronze_totals as (
+  select count(*) as total_tasks
+  from public.tasks
+  where lower(coalesce(required_level, 'bronze')) = 'bronze'
+),
+bronze_completions as (
+  select user_id, count(distinct task_id) as completed_tasks
+  from public.user_tasks
+  where lower(coalesce(task_level, 'bronze')) = 'bronze'
+  group by user_id
+)
+update public.level_progress lp
+set current_level = 'silver'
+from bronze_totals bt, bronze_completions bc
+where bt.total_tasks > 0
+  and bc.user_id = lp.user_id
+  and bc.completed_tasks >= bt.total_tasks
+  and coalesce(lp.current_level, 'bronze') = 'bronze';
 
 insert into public.level_progress (user_id, current_level, progress_percentage, total_tasks_completed, total_artists_engaged, updated_at)
 select u.id, 'bronze', 0, 0, 0, now()
@@ -838,6 +871,12 @@ update public.level_progress lp
 set silver_cycles_completed = coalesce(c.silver_cycles_completed, 0),
     gold_cycles_completed = coalesce(c.gold_cycles_completed, 0),
     platinum_cycles_completed = coalesce(c.platinum_cycles_completed, 0),
+    current_level = case
+      when coalesce(c.gold_cycles_completed, 0) >= 2 then 'platinum'
+      when coalesce(c.silver_cycles_completed, 0) >= 3 then 'gold'
+      when coalesce(c.silver_cycles_completed, 0) > 0 then 'silver'
+      else current_level
+    end,
     highest_completed_level = case
       when coalesce(c.platinum_cycles_completed, 0) > 0 or coalesce(c.gold_cycles_completed, 0) >= 2 then 'platinum'
       when coalesce(c.gold_cycles_completed, 0) > 0 then 'gold'
@@ -960,8 +999,8 @@ begin
     raise exception 'level_has_no_tasks';
   end if;
 
-  insert into public.level_progress (user_id, current_level, progress_percentage, total_tasks_completed, total_artists_engaged, updated_at)
-  values (auth.uid(), 'bronze', 0, 0, 0, now())
+  insert into public.level_progress (user_id, current_level, active_paid_level, progress_percentage, total_tasks_completed, total_artists_engaged, updated_at)
+  values (auth.uid(), 'bronze', null, 0, 0, 0, now())
   on conflict (user_id) do nothing;
 
   select current_level, highest_completed_level, silver_cycles_completed, gold_cycles_completed, platinum_cycles_completed
@@ -970,7 +1009,17 @@ begin
   where user_id = auth.uid()
   for update;
 
-  if coalesce(v_current_level, 'bronze') <> 'bronze' then
+  if v_level <> coalesce(v_current_level, 'bronze') then
+    raise exception 'level_not_available_yet';
+  end if;
+
+  if exists (
+    select 1
+    from public.level_progress
+    where user_id = auth.uid()
+      and active_paid_level is not null
+      and active_level_cycle_id is not null
+  ) then
     raise exception 'complete_current_level_first';
   end if;
 
@@ -1025,6 +1074,7 @@ begin
 
   update public.level_progress
   set current_level = v_level,
+      active_paid_level = v_level,
       active_level_cycle_id = v_cycle_id,
       highest_completed_level = v_highest_completed_level,
       silver_cycles_completed = v_silver_cycles_completed,
@@ -1062,14 +1112,16 @@ declare
   v_cycle_id uuid;
   v_total_level_tasks integer;
   v_completed_level_tasks integer;
+  v_bronze_total_tasks integer;
+  v_bronze_completed_tasks integer;
   v_progress integer;
 begin
   if v_user_id is null then
     raise exception 'not_authenticated';
   end if;
 
-  insert into public.level_progress (user_id, current_level, progress_percentage, total_tasks_completed, total_artists_engaged, updated_at)
-  values (v_user_id, 'bronze', 0, 0, 0, now())
+  insert into public.level_progress (user_id, current_level, active_paid_level, progress_percentage, total_tasks_completed, total_artists_engaged, updated_at)
+  values (v_user_id, 'bronze', null, 0, 0, 0, now())
   on conflict (user_id) do nothing;
 
   select lower(coalesce(required_level, 'bronze')), reward_amount, reward_points
@@ -1081,7 +1133,7 @@ begin
     raise exception 'task_not_found';
   end if;
 
-  select current_level, active_level_cycle_id
+  select active_paid_level, active_level_cycle_id
   into v_current_level, v_cycle_id
   from public.level_progress
   where user_id = v_user_id
@@ -1100,6 +1152,25 @@ begin
 
     insert into public.user_tasks (user_id, task_id, earned_amount, earned_points, completion_date, task_level)
     values (v_user_id, p_task_id, v_reward_amount, v_reward_points, current_date, 'bronze');
+
+    select count(*)
+    into v_bronze_total_tasks
+    from public.tasks
+    where lower(coalesce(required_level, 'bronze')) = 'bronze';
+
+    select count(distinct task_id)
+    into v_bronze_completed_tasks
+    from public.user_tasks
+    where user_id = v_user_id
+      and lower(coalesce(task_level, 'bronze')) = 'bronze';
+
+    if v_bronze_total_tasks > 0 and v_bronze_completed_tasks >= v_bronze_total_tasks then
+      update public.level_progress
+      set current_level = 'silver',
+          updated_at = now()
+      where user_id = v_user_id
+        and coalesce(current_level, 'bronze') = 'bronze';
+    end if;
   else
     if coalesce(v_current_level, 'bronze') <> v_task_level then
       raise exception 'level_locked';
@@ -1149,7 +1220,12 @@ begin
 
     if v_completed_level_tasks >= v_total_level_tasks and v_total_level_tasks > 0 then
       update public.level_progress
-      set current_level = 'bronze',
+      set current_level = case
+            when v_task_level = 'gold' and gold_cycles_completed + 1 >= 2 then 'platinum'
+            when v_task_level = 'silver' and silver_cycles_completed + 1 >= 3 then 'gold'
+            else current_level
+          end,
+          active_paid_level = null,
           active_level_cycle_id = null,
           highest_completed_level = case
             when v_task_level = 'platinum' or platinum_cycles_completed + case when v_task_level = 'platinum' then 1 else 0 end > 0 then 'platinum'

@@ -21,6 +21,7 @@ type LevelName = 'bronze' | 'silver' | 'gold' | 'platinum'
 
 interface LevelProgress {
   current_level: LevelName
+  active_paid_level: LevelName | null
   active_level_cycle_id: string | null
   highest_completed_level: LevelName
   silver_cycles_completed: number
@@ -115,7 +116,7 @@ export default function HomePage() {
         // Fetch level progress
         const { data: levelData } = await supabase
           .from('level_progress')
-          .select('current_level, active_level_cycle_id, highest_completed_level, silver_cycles_completed, gold_cycles_completed, platinum_cycles_completed, progress_percentage, total_tasks_completed')
+          .select('current_level, active_paid_level, active_level_cycle_id, highest_completed_level, silver_cycles_completed, gold_cycles_completed, platinum_cycles_completed, progress_percentage, total_tasks_completed')
           .eq('user_id', authUser.id)
           .maybeSingle()
 
@@ -285,6 +286,7 @@ export default function HomePage() {
           {Object.entries(LEVEL_CONFIG).map(([level, config]) => {
             const typedLevel = level as LevelName
             const isActive = levelProgress?.current_level === typedLevel
+            const isUnlocked = levelProgress?.active_paid_level === typedLevel
             const completedCycles =
               typedLevel === 'silver'
                 ? silverCyclesCompleted
@@ -342,7 +344,7 @@ export default function HomePage() {
                         : '2-cycle progression package'}
                 </p>
 
-                {isActive && typedLevel !== 'bronze' && (
+                {isUnlocked && typedLevel !== 'bronze' && (
                   <div className="space-y-2">
                     <div className="w-full bg-slate-700 rounded-full h-2">
                       <div
@@ -490,9 +492,9 @@ export default function HomePage() {
           ></div>
         </div>
         <p className="text-sm text-gray-300 mt-3 font-medium">
-          {levelProgress?.current_level === 'bronze'
-            ? `You completed ${dailyTasksCompleted} task(s) today and are ready for ${nextUnlockText.toLowerCase()}.`
-            : `You completed ${levelProgress?.total_tasks_completed || 0} task(s) in the active ${levelProgress?.current_level} cycle.`}
+          {levelProgress?.active_paid_level
+            ? `You completed ${levelProgress?.total_tasks_completed || 0} task(s) in the active ${levelProgress?.active_paid_level} cycle.`
+            : `You completed ${dailyTasksCompleted} task(s) and are ready for ${nextUnlockText.toLowerCase()}.`}
         </p>
       </div>
 

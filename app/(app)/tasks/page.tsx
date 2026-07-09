@@ -36,6 +36,7 @@ interface UserStats {
 
 interface LevelProgress {
   current_level: LevelName
+  active_paid_level: LevelName | null
   active_level_cycle_id: string | null
   highest_completed_level: LevelName
   silver_cycles_completed: number
@@ -86,6 +87,7 @@ export default function TasksPage() {
   const [userStats, setUserStats] = useState<UserStats | null>(null)
   const [levelProgress, setLevelProgress] = useState<LevelProgress>({
     current_level: 'bronze',
+    active_paid_level: null,
     active_level_cycle_id: null,
     highest_completed_level: 'bronze',
     silver_cycles_completed: 0,
@@ -120,7 +122,7 @@ export default function TasksPage() {
         supabase.from('users').select('total_earnings, total_points').eq('id', authUser.id).single(),
         supabase
           .from('level_progress')
-          .select('current_level, active_level_cycle_id, highest_completed_level, silver_cycles_completed, gold_cycles_completed, platinum_cycles_completed, progress_percentage, total_tasks_completed')
+          .select('current_level, active_paid_level, active_level_cycle_id, highest_completed_level, silver_cycles_completed, gold_cycles_completed, platinum_cycles_completed, progress_percentage, total_tasks_completed')
           .eq('user_id', authUser.id)
           .maybeSingle(),
         supabase.from('level_pricing').select('level, price'),
@@ -142,6 +144,7 @@ export default function TasksPage() {
       } else {
         setLevelProgress({
           current_level: 'bronze',
+          active_paid_level: null,
           active_level_cycle_id: null,
           highest_completed_level: 'bronze',
           silver_cycles_completed: 0,
@@ -220,19 +223,19 @@ export default function TasksPage() {
             (task) =>
               task.level_cycle_id &&
               task.level_cycle_id === levelProgress.active_level_cycle_id &&
-              task.task_level?.toLowerCase() === levelProgress.current_level,
+              task.task_level?.toLowerCase() === levelProgress.active_paid_level,
           )
           .map((task) => task.task_id),
       ),
-    [completedTasks, levelProgress.active_level_cycle_id, levelProgress.current_level],
+    [completedTasks, levelProgress.active_level_cycle_id, levelProgress.active_paid_level],
   )
 
   const activeLevelTaskCount = normalizedTasks.filter(
-    (task) => task.required_level === levelProgress.current_level && task.required_level !== 'bronze',
+    (task) => task.required_level === levelProgress.active_paid_level && task.required_level !== 'bronze',
   ).length
 
   const remainingActiveLevelTasks =
-    levelProgress.current_level === 'bronze'
+    !levelProgress.active_paid_level
       ? 0
       : Math.max(activeLevelTaskCount - activeLevelCompletedIds.size, 0)
 
@@ -244,7 +247,8 @@ export default function TasksPage() {
   }
 
   const canPurchaseLevel = (level: LevelName) => {
-    if (level === 'bronze' || levelProgress.current_level !== 'bronze') return false
+    if (level === 'bronze' || !!levelProgress.active_paid_level) return false
+    if (level !== levelProgress.current_level) return false
     if (level === 'silver') return getCompletedCycles('silver') < 3
     if (level === 'gold') return getCompletedCycles('silver') >= 3 && getCompletedCycles('gold') < 2
     return getCompletedCycles('gold') >= 2
@@ -262,6 +266,8 @@ export default function TasksPage() {
         return 0
     }
   })
+
+  const visibleTasks = sortedTasks.filter((task) => task.required_level === levelProgress.current_level)
 
   const handleCompleteTask = async (taskId: string) => {
     try {
@@ -309,7 +315,7 @@ export default function TasksPage() {
       <div className="bg-gradient-to-r from-slate-800 to-slate-700 border border-yellow-500 border-opacity-30 rounded-xl p-4 md:p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <p className="text-sm text-gray-400 mb-1">Current active level</p>
+            <p className="text-sm text-gray-400 mb-1">Current level</p>
             <h2 className="text-2xl md:text-3xl font-bold text-white capitalize">
               {levelProgress.current_level}
             </h2>
@@ -330,6 +336,7 @@ export default function TasksPage() {
         {LEVELS.map((level) => {
           const price = levelPricing[level] ?? 0
           const isActive = levelProgress.current_level === level
+          const isUnlockedForTasks = levelProgress.active_paid_level === level
           const balance = Number(userStats?.total_earnings || 0)
           const canPurchase = canPurchaseLevel(level)
           const hasEnoughBalance = balance >= price
@@ -356,7 +363,7 @@ export default function TasksPage() {
               <p className="text-sm text-gray-400 mb-4">
                 {level === 'bronze'
                   ? 'Start here'
-                  : isActive
+                  : isUnlockedForTasks
                     ? 'Tasks unlocked'
                     : canPurchase
                       ? 'Pay to unlock'
@@ -369,7 +376,7 @@ export default function TasksPage() {
                 <div className="rounded-lg bg-green-500 bg-opacity-10 border border-green-500 border-opacity-30 px-3 py-2 text-sm text-green-400">
                   Always available
                 </div>
-              ) : isActive ? (
+              ) : isUnlockedForTasks ? (
                 <div className="rounded-lg bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-30 px-3 py-2 text-sm text-yellow-300">
                   Tasks unlocked
                 </div>
@@ -396,9 +403,9 @@ export default function TasksPage() {
                 </button>
               ) : (
                 <div className="rounded-lg bg-slate-700 px-3 py-2 text-sm text-gray-300">
-                  {levelProgress.current_level !== 'bronze'
-                    ? 'Finish your current level first'
-                    : 'Complete the previous level to unlock'}
+                  {level !== levelProgress.current_level
+                    ? 'Complete the previous level to unlock'
+                    : 'Pay to unlock'}
                 </div>
               )}
             </div>
@@ -406,15 +413,15 @@ export default function TasksPage() {
         })}
       </div>
 
-      {levelProgress.current_level !== 'bronze' && (
+      {levelProgress.active_paid_level && (
         <div className="bg-gradient-to-r from-purple-900 to-slate-900 border border-purple-500 border-opacity-40 rounded-xl p-4 md:p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-sm font-semibold text-purple-200 capitalize">
-                {levelProgress.current_level} level is active
+                {levelProgress.active_paid_level} tasks unlocked
               </p>
               <p className="text-sm text-gray-300 mt-1">
-                Complete all tasks in this level to lock it again and return to Bronze automatically.
+                Complete your tasks to keep moving forward.
               </p>
             </div>
             <div className="min-w-40">
@@ -425,7 +432,7 @@ export default function TasksPage() {
                 />
               </div>
               <p className="text-xs text-right text-gray-300 mt-2">
-                {levelProgress.total_tasks_completed}/{activeLevelTaskCount} completed
+                {levelProgress.total_tasks_completed}/{activeLevelTaskCount} done
               </p>
             </div>
           </div>
@@ -459,13 +466,13 @@ export default function TasksPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {sortedTasks.map((task) => {
+        {visibleTasks.map((task) => {
           const taskLevel = task.required_level as LevelName
           const isBronze = taskLevel === 'bronze'
           const isCompleted = isBronze
             ? bronzeCompletedIds.has(task.id)
             : activeLevelCompletedIds.has(task.id)
-          const isLocked = !isBronze && levelProgress.current_level !== taskLevel
+          const isLocked = !isBronze && levelProgress.active_paid_level !== taskLevel
           const artist = task.artist_id ? artists[task.artist_id] : null
 
           return (
@@ -530,7 +537,9 @@ export default function TasksPage() {
                   <p className="text-xs text-gray-500 mb-3">
                     {isBronze
                       ? 'Bronze task: free and can only be completed once.'
-                      : `Requires active ${taskLevel.toUpperCase()} level.`}
+                      : levelProgress.active_paid_level === taskLevel
+                        ? `${taskLevel.toUpperCase()} tasks unlocked.`
+                        : `Pay to unlock ${taskLevel.toUpperCase()} tasks.`}
                   </p>
 
                   <div className="relative group">
@@ -575,9 +584,9 @@ export default function TasksPage() {
         })}
       </div>
 
-      {sortedTasks.length === 0 ? (
+      {visibleTasks.length === 0 ? (
         <div className="text-center py-12">
-          <p className="text-gray-400 text-lg">No tasks available</p>
+          <p className="text-gray-400 text-lg">No tasks available for your current level</p>
         </div>
       ) : null}
     </div>
