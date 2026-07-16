@@ -44,6 +44,46 @@ begin
   end if;
 end $$;
 
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'users' and column_name = 'is_blocked'
+  ) then
+    alter table users add column is_blocked boolean not null default false;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'users' and column_name = 'blocked_at'
+  ) then
+    alter table users add column blocked_at timestamp with time zone;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'users' and column_name = 'blocked_reason'
+  ) then
+    alter table users add column blocked_reason text;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'users' and column_name = 'blocked_by'
+  ) then
+    alter table users add column blocked_by uuid references auth.users(id);
+  end if;
+end $$;
+
 create or replace function public.fill_users_phone_number()
 returns trigger
 language plpgsql
@@ -542,12 +582,16 @@ grant execute on function public.approve_withdrawal_request(uuid) to authenticat
 grant execute on function public.reject_withdrawal_request(uuid, text) to authenticated;
 
 -- 13. Admin-only users listing (includes auth.users.email)
-create or replace function public.admin_list_users()
+drop function if exists public.admin_list_users();
+
+create function public.admin_list_users()
 returns table (
   id uuid,
   username text,
   email text,
   phone_number text,
+  is_blocked boolean,
+  blocked_reason text,
   total_earnings numeric,
   total_points integer,
   is_vip boolean,
@@ -569,6 +613,8 @@ begin
     u.username,
     au.email::text,
     u.phone_number::text,
+    u.is_blocked,
+    u.blocked_reason,
     u.total_earnings,
     u.total_points,
     u.is_vip,
@@ -582,6 +628,75 @@ $$;
 
 revoke execute on function public.admin_list_users() from public;
 grant execute on function public.admin_list_users() to authenticated;
+
+create or replace function public.admin_block_user(
+  p_user_id uuid,
+  p_reason text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'not_authorized';
+  end if;
+
+  if p_user_id = auth.uid() then
+    raise exception 'cannot_block_self';
+  end if;
+
+  if exists (select 1 from public.admin_users where user_id = p_user_id) then
+    raise exception 'cannot_block_admin';
+  end if;
+
+  update public.users
+  set is_blocked = true,
+      blocked_at = now(),
+      blocked_reason = nullif(btrim(coalesce(p_reason, '')), ''),
+      blocked_by = auth.uid(),
+      updated_at = now()
+  where id = p_user_id;
+
+  if not found then
+    raise exception 'user_not_found';
+  end if;
+end;
+$$;
+
+revoke execute on function public.admin_block_user(uuid, text) from public;
+grant execute on function public.admin_block_user(uuid, text) to authenticated;
+
+create or replace function public.admin_unblock_user(
+  p_user_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'not_authorized';
+  end if;
+
+  update public.users
+  set is_blocked = false,
+      blocked_at = null,
+      blocked_reason = null,
+      blocked_by = null,
+      updated_at = now()
+  where id = p_user_id;
+
+  if not found then
+    raise exception 'user_not_found';
+  end if;
+end;
+$$;
+
+revoke execute on function public.admin_unblock_user(uuid) from public;
+grant execute on function public.admin_unblock_user(uuid) to authenticated;
 
 -- 14. Admin deposits (credit user balance)
 create or replace function public.admin_create_deposit(

@@ -58,6 +58,19 @@ export async function updateSession(request: NextRequest) {
       url.pathname = '/auth/login'
       return NextResponse.redirect(url)
     }
+
+    const { data: profile } = await supabase
+      .from('users')
+      .select('is_blocked')
+      .eq('id', user.id)
+      .maybeSingle()
+
+    if (profile?.is_blocked) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/auth/error'
+      url.searchParams.set('type', 'blocked')
+      return NextResponse.redirect(url)
+    }
   }
 
   return supabaseResponse

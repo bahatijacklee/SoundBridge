@@ -2,9 +2,14 @@
 
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { Headphones, AlertCircle } from 'lucide-react'
 
 export default function AuthErrorPage() {
+  const searchParams = useSearchParams()
+  const errorType = searchParams.get('type')
+  const isBlocked = errorType === 'blocked'
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
       {/* Background decorative elements */}
@@ -31,10 +36,12 @@ export default function AuthErrorPage() {
           {/* Content */}
           <div className="text-center mb-8">
             <h2 className="text-2xl font-bold text-white mb-3">
-              Authentication Error
+              {isBlocked ? 'Account Blocked' : 'Authentication Error'}
             </h2>
             <p className="text-gray-400 mb-4">
-              Something went wrong during the authentication process. Please try again.
+              {isBlocked
+                ? 'Your account has been blocked from accessing the user dashboard. Please contact support if you believe this is a mistake.'
+                : 'Something went wrong during the authentication process. Please try again.'}
             </p>
           </div>
 
@@ -46,11 +53,13 @@ export default function AuthErrorPage() {
               </Button>
             </Link>
 
-            <Link href="/auth/sign-up" className="block w-full">
-              <Button variant="outline" className="w-full border-gray-600 text-gray-300 hover:bg-slate-700">
-                Create New Account
-              </Button>
-            </Link>
+            {!isBlocked ? (
+              <Link href="/auth/sign-up" className="block w-full">
+                <Button variant="outline" className="w-full border-gray-600 text-gray-300 hover:bg-slate-700">
+                  Create New Account
+                </Button>
+              </Link>
+            ) : null}
           </div>
 
           {/* Help Text */}
